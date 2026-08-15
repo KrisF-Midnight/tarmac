@@ -3,6 +3,7 @@
 # cluster, which matters because `make up` will grow more steps after this one
 # and a developer will end up re-running the whole thing.
 
+# shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_docker

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tear the cluster down. Idempotent: a no-op if it was never created.
 
+# shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_docker

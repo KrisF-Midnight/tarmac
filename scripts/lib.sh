@@ -4,6 +4,10 @@
 set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-tarmac}"
+
+# Read by the scripts that source this file, which is invisible to a linter
+# looking at lib.sh on its own.
+# shellcheck disable=SC2034
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

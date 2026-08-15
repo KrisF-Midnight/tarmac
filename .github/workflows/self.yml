@@ -1,0 +1,44 @@
+# The platform gating itself.
+#
+# The gate logic is the highest-consequence code in either repository: a bug in
+# it either blocks work that was fine or waves through work that was not. So it
+# gets the same treatment it imposes on applications — types, tests, and a check
+# that its own generated documentation still matches the code.
+
+name: self
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck
+
+      - run: bun test
+
+      # Documentation that claims to describe the code, verified against it.
+      - run: make check-gate-matrix
+
+      # The shell that survives is the shell nobody has read since it was
+      # written, so it gets a linter rather than trust.
+      - name: Lint the platform scripts
+        # -x so it follows the sourced lib.sh; without it the shared helpers are
+        # invisible and every script looks like it uses undefined variables.
+        run: shellcheck -x scripts/*.sh

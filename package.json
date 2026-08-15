@@ -1,0 +1,18 @@
+{
+  "name": "tarmac",
+  "module": "gates/src/cli.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "gates": "bun gates/src/cli.ts",
+    "gate-matrix": "bun gates/src/matrix.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14"
+  },
+  "peerDependencies": {
+    "typescript": "7.0.2"
+  }
+}

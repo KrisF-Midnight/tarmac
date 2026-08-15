@@ -1,0 +1,84 @@
+# The versioned platform contract.
+#
+# An application repository consumes this with
+#   uses: <owner>/tarmac/.github/workflows/ci.yml@v1
+# and nothing else. Everything below is either genuinely GitHub-native — checking
+# out, installing a toolchain, authenticating to a registry — or a single call
+# into the gate entrypoint that `make ci` runs on a laptop. No gate logic lives
+# in this file, because logic here could only ever be tested by pushing a commit.
+#
+# Third-party actions are pinned to a commit SHA rather than a tag. A tag is a
+# mutable pointer in somebody else's repository, and the tj-actions/changed-files
+# compromise in March 2025 was exactly that: a tag retargeted at malicious code,
+# which every consumer picked up silently.
+
+name: ci
+
+on:
+  workflow_call:
+    inputs:
+      platform-ref:
+        description: >-
+          The tarmac ref to check out for the gate code. This MUST match the ref
+          in the caller's `uses:` line. GitHub does not expose the ref a reusable
+          workflow was called at, so it cannot be derived — see decision 5.
+        type: string
+        default: v1
+      app-dir:
+        description: Subdirectory of the caller's repository to gate.
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: gates
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Only meaningful on the default branch, where the publish gate runs.
+      packages: write
+
+    steps:
+      # The caller's repository. A reusable workflow runs in the caller's
+      # context, so this is the app, not the platform.
+      - name: Check out the application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app
+
+      # The platform, explicitly. Without this the gate code is simply absent:
+      # the `uses:` reference fetches this YAML file and nothing else from tarmac.
+      - name: Check out the platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/tarmac
+          ref: ${{ inputs.platform-ref }}
+          path: platform
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: platform/.bun-version
+
+      - name: Install the platform's own dependencies
+        working-directory: platform
+        run: bun install --frozen-lockfile
+
+      # Credentials stay out of the gate code. GITHUB_TOKEN is short-lived and
+      # scoped to this repository, which is why no PAT is involved here.
+      - name: Log in to the registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The one line that does the work. Identical to `make ci`.
+      - name: Run the gates
+        working-directory: platform
+        run: bun gates/src/cli.ts --app-dir "$GITHUB_WORKSPACE/app/${{ inputs.app-dir }}" --markdown "$GITHUB_STEP_SUMMARY"

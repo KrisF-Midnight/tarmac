@@ -2,6 +2,7 @@
 # What is actually running right now. Grows as the platform does; today it
 # reports the cluster only.
 
+# shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_cmd kind "brew install kind"

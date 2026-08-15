@@ -1,5 +1,9 @@
 .DS_Store
 
+# Dependencies. bun.lock is deliberately NOT ignored — the gates install
+# frozen, which is only meaningful if the lockfile is in git.
+node_modules/
+
 # Terraform. Note .terraform.lock.hcl is deliberately NOT ignored — the
 # provider lock file is what makes a plan reproducible and belongs in git.
 .terraform/
