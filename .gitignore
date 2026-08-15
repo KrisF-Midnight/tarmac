@@ -1,0 +1,14 @@
+.DS_Store
+
+# Terraform. Note .terraform.lock.hcl is deliberately NOT ignored — the
+# provider lock file is what makes a plan reproducible and belongs in git.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+plan.json
+
+# Local state that must never be committed
+kubeconfig
+.env
+*.pem

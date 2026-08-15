@@ -1,0 +1,25 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: tarmac
+
+# The node image is pinned by digest, not just by tag. Tags are mutable: a
+# rebuild of kindest/node:v1.36.1 would silently change the Kubernetes bits
+# under a cluster that claims to be reproducible. The digest is what makes
+# "it worked on my machine" transferable to a reviewer's machine.
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+
+    # ingress-nginx binds these on the node; mapping them to the host is what
+    # makes the service reachable from a browser. Deliberately not 80/443 —
+    # those need root and collide with whatever else is running locally.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
+
+# Single node on purpose. A control-plane + worker split would demonstrate
+# nothing here that one node does not, and costs ~700MB of a laptop's budget.
