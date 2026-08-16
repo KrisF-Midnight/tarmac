@@ -16,3 +16,6 @@ plan.json
 kubeconfig
 .env
 *.pem
+
+# Terraform lock objects and generated plan artefacts
+crash.log

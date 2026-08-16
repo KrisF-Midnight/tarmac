@@ -18,22 +18,33 @@ laptop with no cloud account.
 | Bun | runs the gates | `brew install bun` |
 | kind | the Kubernetes cluster | `brew install kind` |
 | kubectl | talks to it | `brew install kubectl` |
+| Terraform | provisions the applications' cloud dependencies, 1.11 or newer | `brew install terraform` |
 
-Later stages add `terraform`, `tflocal`, `conftest`, `kyverno`, `trivy` and `argocd`.
+Later stages add `conftest`, `kyverno`, `trivy` and `argocd`.
+
+Nothing here needs an AWS account, AWS credentials, or the AWS CLI. The stand-in accepts any
+credentials and `make up` supplies throwaway ones, so a mistake in this stack cannot reach an
+account that charges money.
 
 ## Getting started
 
 ```
-make up       # bring the platform up
-make status   # what is running
-make ci       # run the gates against ../greeter
-make down     # tear it back down
+make up         # bring the platform up and provision ../greeter's dependencies
+make status     # what is running
+make ci         # run the gates against ../greeter
+make infra      # re-provision after changing the Terraform
+make infra-plan # what provisioning would change, without changing it
+make down       # tear it back down
 ```
 
-`make` on its own lists the available targets.
+`make` on its own lists the available targets. `ENV=<name>` selects an environment for the
+`infra` targets; it defaults to `local`.
 
-Both `up` and `down` are safe to re-run: `up` reuses an existing cluster rather than failing,
-`down` on an absent one is a no-op.
+All of these are safe to re-run: `up` reuses an existing cluster rather than failing, `down` on
+an absent one is a no-op, and a second `make infra` reports no changes.
+
+`make down` keeps the local AWS stand-in's data volume, so Terraform state survives a teardown.
+`scripts/localstack-down.sh --purge` discards it, which means the next `up` starts from nothing.
 
 ## Riding the road
 
@@ -88,11 +99,35 @@ bun gates/src/cli.ts --help
 | `.github/workflows/ci.yml` | the reusable workflow application repos call |
 | `.github/workflows/self.yml` | the platform gating itself |
 | `gates/` | gate logic and its test suite |
+| `infra/modules/` | the Terraform modules application repositories consume |
 | `kind/` | cluster definition, node image pinned by digest |
+| `localstack/` | the local AWS stand-in: compose file, environment, state-bucket bootstrap |
 | `scripts/` | the steps behind the Makefile targets |
 | `docs/` | the gate matrix and the decision record |
 
+## Infrastructure
+
+An application declares its cloud dependencies in its own `infra/` directory by calling a
+platform module — see [`infra/modules/app-dependencies`](infra/modules/app-dependencies). The
+module decides what a bucket looks like; the application decides only that it wants one.
+
+Two properties are worth knowing:
+
+**The Terraform is not shaped by where it runs.** Region, credentials and endpoint all arrive
+through the standard `AWS_*` environment variables, so the same configuration would run against
+a real account. There is no endpoint override and no branch on environment; per-environment
+values live in `env/<name>.backend.hcl` and `env/<name>.tfvars` beside the configuration.
+
+**State is real.** The backend is S3 on the stand-in, locked with a lock object rather than a
+DynamoDB table, and it survives a restart. The state bucket itself is created by an init hook
+running inside the stand-in, because a backend cannot create the bucket it stores its own state
+in — which is also why bringing the platform up needs no AWS CLI on the host.
+
+There is no `terraform apply` in CI. CI's copy of the stand-in dies with the job, so an apply
+there would provision something and destroy it in the same breath; CI runs a plan and a module
+test. Terraform owns what lives outside the cluster, Argo owns what lives inside it.
+
 ## Status
 
-Early. The cluster lifecycle and the gate pipeline are in place; policies, IaC and GitOps
-delivery land on top of them.
+Early. The cluster lifecycle, the gate pipeline and application infrastructure are in place;
+policies and GitOps delivery land on top of them.

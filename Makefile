@@ -9,17 +9,37 @@ SHELL := /usr/bin/env bash
 # how the two repos sit on a laptop; CI passes the path of its own checkout.
 APP_DIR ?= ../greeter
 
-.PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix
+# Which environment `make infra` provisions. Selects a backend config, so state
+# for one environment can never be written over another's.
+ENV ?= local
+
+.PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix \
+        infra infra-plan infra-fmt
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
+# Order matters and is the same order the real thing has: somewhere to run,
+# then the dependencies outside the cluster, then the workloads inside it.
 up: ## Bring the local platform up
 	@./scripts/cluster-up.sh
+	@./scripts/localstack-up.sh
+	@$(MAKE) --no-print-directory infra
 
 down: ## Tear the local platform down
+	@./scripts/localstack-down.sh
 	@./scripts/cluster-down.sh
+
+infra: ## Provision APP_DIR's cloud dependencies
+	@./scripts/infra-apply.sh $(APP_DIR) $(ENV)
+
+infra-plan: ## Show what provisioning APP_DIR would change
+	@./scripts/infra-plan.sh $(APP_DIR) $(ENV)
+
+infra-fmt: ## Check Terraform formatting across the platform and APP_DIR
+	@terraform fmt -check -recursive -diff infra
+	@terraform fmt -check -recursive -diff $(APP_DIR)/infra
 
 status: ## Show what is currently running
 	@./scripts/status.sh

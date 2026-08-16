@@ -20,3 +20,16 @@ if cluster_exists; then
 else
   echo "cluster   down"
 fi
+
+if localstack_running; then
+  echo "aws       up ($AWS_ENDPOINT_URL)"
+  # What has actually been provisioned, rather than what the container claims.
+  # A running stand-in with an empty bucket list means an apply is missing, and
+  # that is the failure worth catching here — the service would return 503 and
+  # the cause would look like the service.
+  docker exec "$LOCALSTACK_CONTAINER" awslocal s3api list-buckets \
+    --query 'Buckets[].Name' --output text 2>/dev/null \
+    | tr '\t' '\n' | sed '/^$/d; s/^/          bucket /'
+else
+  echo "aws       down"
+fi

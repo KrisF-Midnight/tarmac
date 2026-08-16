@@ -1,0 +1,55 @@
+# The local stand-in for AWS.
+#
+# It runs beside the kind cluster in Docker rather than inside it, which is the
+# same split the real thing has: Terraform owns what lives outside the cluster,
+# Argo owns what lives inside it. Nothing here is a Kubernetes object, so
+# nothing here belongs to Argo.
+name: tarmac
+
+services:
+  localstack:
+    # gresau/localstack-persist is the official LocalStack Community image plus
+    # a persistence plugin, so Terraform state survives a restart. Community
+    # dropped persistence in 1.0, and LocalStack's own :latest has required an
+    # auth token since March 2026 — neither is acceptable for something that is
+    # meant to come up with one command. Pinned by digest for the same reason
+    # every other image here is. See docs/decisions.md, decision 13.
+    image: gresau/localstack-persist:4.14@sha256:02045e045f1f3868c3cadef78de2a7c048840f48ffd506babf4a36f42a4845ba
+    container_name: tarmac-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      # Only what the platform actually provisions. Starting the rest costs
+      # memory and start-up time to emulate services nothing calls.
+      #
+      # s3control is here despite nothing declaring an s3control resource: AWS
+      # provider v6 reads bucket tags through ListTagsForResource, which is an
+      # s3control call. Without it every tagged bucket fails to create with a
+      # 501 that names a service the Terraform never mentions.
+      SERVICES: s3,s3control,ssm
+      AWS_DEFAULT_REGION: eu-west-1
+      PERSISTENCE: 1
+    volumes:
+      - localstack-data:/persisted-data
+      # Runs inside the container once the emulated services are up. This is
+      # where the Terraform state bucket comes from: a backend cannot create
+      # the bucket it stores its own state in, so something has to exist first.
+      # Doing it in here rather than on the host means the bootstrap needs no
+      # AWS CLI, no Python and no credentials on a developer's machine.
+      - ./init:/etc/localstack/init:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+volumes:
+  # Named rather than a bind mount: LocalStack writes as root, and a bind mount
+  # would litter the working tree with root-owned files that `make down` then
+  # cannot clean up.
+  localstack-data:
+
+networks:
+  default:
+    name: tarmac
