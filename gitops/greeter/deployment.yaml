@@ -47,11 +47,15 @@ spec:
           type: RuntimeDefault
       containers:
         - name: greeter
-          # Built locally and side-loaded into the node by `make deploy-local`;
-          # nothing pulls it. CI replaces this with a digest reference — a tag
-          # names a moving target, a digest names the bytes that passed the
-          # gates. IfNotPresent rather than Never so the same manifest works
-          # once the image does come from a registry.
+          # Written by CI, not by hand: this line is the deployment. A digest
+          # rather than a tag, because a tag names a moving target and a digest
+          # names the exact bytes that passed the gates — so what a reviewer
+          # reads here and what the kubelet runs cannot come apart.
+          #
+          # IfNotPresent rather than Always: a digest already identifies the
+          # bytes uniquely, so re-pulling it can only return what is cached. The
+          # pull that matters happens anyway, because a changed digest is by
+          # definition an image the node does not have.
           image: ghcr.io/krisf-midnight/greeter@sha256:4ef0455991b2c13781fe0dc720b060987002d67fede65c9d1e5cb8d59092a3d3
           imagePullPolicy: IfNotPresent
           ports:

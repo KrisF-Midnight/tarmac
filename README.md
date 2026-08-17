@@ -132,6 +132,34 @@ There is no `terraform apply` in CI. CI's copy of the stand-in dies with the job
 there would provision something and destroy it in the same breath; CI runs a plan and a module
 test. Terraform owns what lives outside the cluster, Argo owns what lives inside it.
 
+## Breaking glass
+
+Nothing here deploys to the cluster. The only path in is a commit: CI writes an image digest
+into `gitops/`, Argo CD reconciles it, and `selfHeal` reverts anything edited by hand. That is
+the property the design rests on, and it is also the one that hurts during an incident, when the
+fix is understood but not yet merged.
+
+```
+make suspend    # stop Argo CD reconciling — kubectl edits now stick
+make resume     # hand the cluster back to git, reverting those edits
+```
+
+Two things about this are deliberate:
+
+**It stops the reconciler, not an application.** Clearing `syncPolicy.automated` on one
+Application — what `argocd app set --sync-policy none` does — does not work here, because the
+Applications are themselves reconciled by `root`, which has `selfHeal` too. Argo would restore
+the policy within minutes and quietly resume deploying. Scaling the controller down cannot be
+undone by the thing it turns off.
+
+**It is cluster-wide, and `make status` says so on every run.** An emergency lever should be one
+switch that is obviously on or obviously off, not a per-application setting somebody has to
+remember the state of. The cost is real: while suspended, nothing reconciles for anything, and
+digests the pipeline writes queue up in git undeployed.
+
+Anything worth keeping has to be committed *before* `make resume`, not after — resume reverts
+every hand edit at once.
+
 ## Status
 
 Early. The cluster lifecycle, the gate pipeline and application infrastructure are in place;

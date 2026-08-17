@@ -72,7 +72,19 @@ fi
 
 if kc get namespace argocd >/dev/null 2>&1 \
   && kc get crd applications.argoproj.io >/dev/null 2>&1; then
-  echo "argocd    up ($ARGOCD_VERSION)"
+  # A suspended platform is reported before anything else about it, because
+  # every line below becomes a claim about the past the moment reconciliation
+  # stops. "Synced" under a stopped controller means "was Synced when it was
+  # last looked at", and that is exactly the sentence someone misreads during an
+  # incident. `make suspend` is easy to walk away from; this is what makes
+  # walking away from it survivable.
+  if [[ "$(kc get statefulset/argocd-application-controller --namespace argocd \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null)" == "0" ]]; then
+    echo "argocd    SUSPENDED ($ARGOCD_VERSION) — not reconciling. Run 'make resume'."
+    echo "          Nothing below is being enforced, and git is not deploying."
+  else
+    echo "argocd    up ($ARGOCD_VERSION)"
+  fi
   # Sync and health per application, which together answer "is what is running
   # what git says, and does it work". An application that is Synced and Degraded
   # is the interesting case: the manifests arrived and the workload is unhappy,

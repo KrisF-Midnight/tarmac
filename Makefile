@@ -23,7 +23,7 @@ APP ?= $(notdir $(patsubst %/,%,$(APP_DIR)))
 FACTS ?= /tmp/tarmac-facts.json
 
 .PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix \
-        infra infra-plan infra-fmt ingress argocd aws-endpoint deploy-local promote
+        infra infra-plan infra-fmt ingress argocd aws-endpoint suspend resume promote
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -60,13 +60,15 @@ argocd: ## Install Argo CD and point it at gitops/
 aws-endpoint: ## Regenerate the emulator's EndpointSlice from its current address
 	@./scripts/aws-endpoint-up.sh
 
-# The inner loop, and the one thing here that is not GitOps. It builds APP_DIR
-# and pushes the image straight into the cluster's image store, so a code change
-# is testable without a registry round trip or a commit. The deployed manifest
-# still comes from git — this only replaces the bytes the tag resolves to, which
-# is why it ends with a restart rather than an edit.
-deploy-local: ## Build APP_DIR and load it into the cluster, bypassing the registry
-	@./scripts/deploy-local.sh $(APP_DIR)
+# The only way to change the cluster without a commit, and it does not deploy
+# anything — it stops Argo CD reverting what you do by hand, then puts it back.
+# Deliberately a pair: an off switch with no on switch beside it is how a cluster
+# ends up drifting for a week because somebody fixed an incident and went home.
+suspend: ## Break glass: stop Argo CD reconciling, so kubectl edits stick
+	@./scripts/reconcile.sh suspend
+
+resume: ## Hand the cluster back to git, reverting anything edited by hand
+	@./scripts/reconcile.sh resume
 
 infra: ## Provision APP_DIR's cloud dependencies
 	@./scripts/infra-apply.sh $(APP_DIR) $(ENV)
