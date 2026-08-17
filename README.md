@@ -69,6 +69,11 @@ In exchange the application provides three things and nothing else:
 There is no per-application configuration file. The moment applications start configuring
 the road, it stops being paved.
 
+Before an application can make that call, the deployment identity has to exist and its
+credentials have to be in the application repository. That is one-time setup, and it is
+written down in [docs/onboarding.md](docs/onboarding.md) — including the two steps that are
+web-UI clicks rather than code, and why neither can be automated.
+
 ## Gates
 
 The same entrypoint runs on a laptop and in CI — `make ci` and the workflow both call
@@ -103,7 +108,7 @@ bun gates/src/cli.ts --help
 | `kind/` | cluster definition, node image pinned by digest |
 | `localstack/` | the local AWS stand-in: compose file, environment, state-bucket bootstrap |
 | `scripts/` | the steps behind the Makefile targets |
-| `docs/` | the gate matrix and the decision record |
+| `docs/` | onboarding, the gate matrix and the decision record |
 
 ## Infrastructure
 
