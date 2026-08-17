@@ -18,6 +18,8 @@ export type Options = {
   only: string[];
   /** Where to write the pull request summary, if anywhere. */
   markdownPath?: string;
+  /** Where to write the collected facts as JSON, if anywhere. */
+  factsPath?: string;
   colour: boolean;
 };
 
@@ -29,6 +31,7 @@ export const USAGE = `usage: gates [options]
   --event <name>     local | pull_request | push (default: from GitHub env)
   --only <ids>       comma-separated gate ids to run
   --markdown <path>  write the pull request summary here
+  --facts-out <path> write what the gates found, as JSON, here
   --no-colour        plain output
 `;
 
@@ -79,6 +82,10 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
         break;
       case "--markdown":
         options.markdownPath = valueAfter(argv, i, flag);
+        i++;
+        break;
+      case "--facts-out":
+        options.factsPath = valueAfter(argv, i, flag);
         i++;
         break;
       case "--no-colour":

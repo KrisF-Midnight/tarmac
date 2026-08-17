@@ -123,6 +123,21 @@ describe("image-publish", () => {
     expect(outcome.summary).toBe("ghcr.io/owner/greeter@sha256:" + "d".repeat(64));
   });
 
+  // The digest has to reach the release step as data. Asserting it here as well
+  // as in the summary is the point: the summary is prose and may be reworded,
+  // the fact is the contract and may not.
+  test("states the digest as a fact, not only in the summary", async () => {
+    const { exec } = fakeExec({
+      inspect: { stdout: "ghcr.io/owner/greeter@sha256:" + "d".repeat(64) + "\n" },
+    });
+
+    const outcome = await gateById("image-publish")!.run(
+      context(exec, { event: "push", env: pushEnv }),
+    );
+
+    expect(outcome.facts).toEqual({ image: "ghcr.io/owner/greeter@sha256:" + "d".repeat(64) });
+  });
+
   // Without a registry there is nothing to push to; skipping is honest, and
   // failing would make `make ci --event push` impossible to run on a laptop.
   test("skips when there is no registry context", async () => {
@@ -154,5 +169,23 @@ describe("image-publish", () => {
 
     expect(outcome.status).toBe("failed");
     expect(outcome.summary).toContain("digest");
+    expect(outcome.facts).toBeUndefined();
+  });
+
+  // Docker exiting zero with output in an unexpected shape is a gate failure
+  // with the output attached, not an exception the runner reports as a broken
+  // gate — the two read identically to whoever has to fix it, and one of them
+  // says what it saw.
+  test("output that is not a repo digest fails the gate rather than throwing", async () => {
+    const { exec } = fakeExec({ inspect: { stdout: "<no value>\n" } });
+
+    const outcome = await gateById("image-publish")!.run(
+      context(exec, { event: "push", env: pushEnv }),
+    );
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("parse");
+    expect(outcome.details).toContain("<no value>");
+    expect(outcome.facts).toBeUndefined();
   });
 });

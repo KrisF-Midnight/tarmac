@@ -47,6 +47,13 @@ describe("parseArgs", () => {
     expect(parseArgs(["--no-colour"], {}).colour).toBe(false);
   });
 
+  // Absent by default: a run that was not asked for a facts file must not
+  // leave one behind for a later step to read as this run's result.
+  test("--facts-out is off unless asked for", () => {
+    expect(parseArgs([], {}).factsPath).toBeUndefined();
+    expect(parseArgs(["--facts-out", "/tmp/facts.json"], {}).factsPath).toBe("/tmp/facts.json");
+  });
+
   test("an unknown event is rejected", () => {
     expect(() => parseArgs(["--event", "merge"], {})).toThrow(UsageError);
   });
@@ -60,5 +67,6 @@ describe("parseArgs", () => {
   test("a flag missing its value is an error, not a swallowed next flag", () => {
     expect(() => parseArgs(["--app-dir", "--event", "push"], {})).toThrow(/needs a value/);
     expect(() => parseArgs(["--only"], {})).toThrow(/needs a value/);
+    expect(() => parseArgs(["--facts-out"], {})).toThrow(/needs a value/);
   });
 });

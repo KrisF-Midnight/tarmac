@@ -28,6 +28,18 @@ on:
         description: Subdirectory of the caller's repository to gate.
         type: string
         default: "."
+    secrets:
+      PLATFORM_APP_ID:
+        description: >-
+          Identity of the GitHub App that commits to the deployment repository.
+          Optional, so an application can adopt the gates before it can deploy;
+          without it the release job fails rather than skipping, because a
+          default-branch build that cannot deploy is a broken pipeline, not a
+          quiet no-op.
+        required: false
+      PLATFORM_APP_PRIVATE_KEY:
+        description: Private key for PLATFORM_APP_ID, in PEM form.
+        required: false
 
 permissions:
   contents: read
@@ -42,6 +54,11 @@ jobs:
       # Only meaningful on the default branch, where the publish gate runs.
       packages: write
 
+    # What the gates found, for the job that promotes it. A digest is public
+    # information, so there is nothing here that a job output should not carry.
+    outputs:
+      facts: ${{ steps.facts.outputs.facts }}
+
     steps:
       # The caller's repository. A reusable workflow runs in the caller's
       # context, so this is the app, not the platform.
@@ -52,20 +69,27 @@ jobs:
 
       # The platform, explicitly. Without this the gate code is simply absent:
       # the `uses:` reference fetches this YAML file and nothing else from tarmac.
+      #
+      # The path is `tarmac/` and not `platform/`, and that is load-bearing
+      # rather than cosmetic: an application's Terraform reaches the shared
+      # modules by relative path — `source = "../../tarmac/infra/modules/..."`
+      # — which is what a developer types on a laptop, where the two repos sit
+      # side by side. Checking out under any other name would mean the same
+      # source line resolving on a laptop and not in CI.
       - name: Check out the platform
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository_owner }}/tarmac
           ref: ${{ inputs.platform-ref }}
-          path: platform
+          path: tarmac
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version-file: platform/.bun-version
+          bun-version-file: tarmac/.bun-version
 
       - name: Install the platform's own dependencies
-        working-directory: platform
+        working-directory: tarmac
         run: bun install --frozen-lockfile
 
       # Credentials stay out of the gate code. GITHUB_TOKEN is short-lived and
@@ -80,5 +104,110 @@ jobs:
 
       # The one line that does the work. Identical to `make ci`.
       - name: Run the gates
-        working-directory: platform
-        run: bun gates/src/cli.ts --app-dir "$GITHUB_WORKSPACE/app/${{ inputs.app-dir }}" --markdown "$GITHUB_STEP_SUMMARY"
+        working-directory: tarmac
+        run: >-
+          bun gates/src/cli.ts
+          --app-dir "$GITHUB_WORKSPACE/app/${{ inputs.app-dir }}"
+          --markdown "$GITHUB_STEP_SUMMARY"
+          --facts-out "$RUNNER_TEMP/facts.json"
+
+      # Hand the findings to the release job. The file is written whatever the
+      # verdict, so this step runs even on failure — a release job that is
+      # skipped for the right reason reads better than one that fails on a
+      # missing output. `needs: gates` is what actually stops a failed run from
+      # promoting; this is only transport.
+      - name: Collect what the gates found
+        id: facts
+        if: always()
+        run: |
+          facts='{}'
+          [ -f "$RUNNER_TEMP/facts.json" ] && facts="$(tr -d '\n' < "$RUNNER_TEMP/facts.json")"
+          echo "facts=$facts" >> "$GITHUB_OUTPUT"
+
+  # Everything above reads. This is the only job in the platform that writes,
+  # and it is a separate job for a reason that is not tidiness: the gates run
+  # the application's own test suite, which is arbitrary code from a repository
+  # the platform does not control. A credential that can commit to tarmac must
+  # never be present in that job's environment. Job isolation is the boundary —
+  # `needs:` passes a digest between them, not a token.
+  release:
+    name: release
+    needs: gates
+    runs-on: ubuntu-latest
+
+    # Only a merged change deploys. A push to a side branch still builds and
+    # publishes an image, which is harmless; promoting one is not.
+    if: >-
+      github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+
+    # Two runs of the same application must not interleave their pushes. Two
+    # DIFFERENT applications still can — they are separate workflow runs in
+    # separate repositories and no concurrency group spans them — which is why
+    # the promoter fetches and rebases rather than assuming it is alone.
+    # Never cancel-in-progress: the thing being cancelled is a git push.
+    concurrency:
+      group: release-${{ github.repository }}
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+
+    steps:
+      # Scoped to one repository and expiring in an hour. The alternative, a
+      # personal access token, is a long-lived credential carrying every
+      # permission its owner has — see decision 32.
+      - name: Mint a token for the deployment repository
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.PLATFORM_APP_ID }}
+          private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: tarmac
+
+      # Two checkouts of the same repository, at deliberately different refs.
+      # The promoter is part of the versioned contract, so it comes from the ref
+      # the caller pinned; the manifest it edits is live state, so it comes from
+      # the branch. Running v1's promoter against main's gitops/ is the correct
+      # pairing — the reverse would mean an app repo silently changing which
+      # code deploys it.
+      - name: Check out the platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/tarmac
+          ref: ${{ inputs.platform-ref }}
+          path: tarmac
+
+      - name: Check out the deployment repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/tarmac
+          token: ${{ steps.app-token.outputs.token }}
+          path: gitops
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: tarmac/.bun-version
+
+      # No `bun install` here on purpose: the promoter uses only Bun's built-ins,
+      # so the write path pulls in no third-party code at all.
+      - name: Promote the published digest
+        working-directory: tarmac
+        env:
+          # Through the environment rather than interpolated into the command
+          # line. `${{ }}` is substituted into the script before a shell ever
+          # sees it, so an expression that expands to shell metacharacters is
+          # not a quoted string — it is more script. Neither value here can
+          # currently do that, and routing both through `env` means nobody has
+          # to re-derive that when a third one is added.
+          FACTS: ${{ needs.gates.outputs.facts }}
+          APP: ${{ github.event.repository.name }}
+        run: |
+          printf '%s' "$FACTS" > "$RUNNER_TEMP/facts.json"
+          bun promote/src/cli.ts \
+            --facts "$RUNNER_TEMP/facts.json" \
+            --app "$APP" \
+            --repo "$GITHUB_WORKSPACE/gitops" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

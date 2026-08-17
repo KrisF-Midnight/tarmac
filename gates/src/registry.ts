@@ -1,4 +1,5 @@
 import { tail } from "./exec";
+import { IMAGE_FACT } from "./facts";
 import { digestFrom, imageNameFor } from "./image";
 import type { Gate, GateContext, GateOutcome } from "./types";
 
@@ -121,7 +122,23 @@ const imagePublish: Gate = {
       return { status: "failed", summary: "could not resolve pushed digest", details: tail(inspect.stderr) };
     }
 
-    return { status: "passed", summary: `${image.ref.split(":")[0]}@${digestFrom(inspect.stdout)}` };
+    // A zero exit with output in an unexpected shape is caught here rather than
+    // left to throw. Both are the same failure to the reader, and this one now
+    // feeds a machine channel, so it is worth reporting as a gate result with
+    // the offending output attached instead of as a stack trace.
+    let digest: string;
+    try {
+      digest = digestFrom(inspect.stdout);
+    } catch (err) {
+      return {
+        status: "failed",
+        summary: "could not parse the pushed digest",
+        details: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    const reference = `${image.ref.split(":")[0]}@${digest}`;
+    return { status: "passed", summary: reference, facts: { [IMAGE_FACT]: reference } };
   },
 };
 

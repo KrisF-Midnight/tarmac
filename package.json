@@ -6,6 +6,7 @@
   "scripts": {
     "gates": "bun gates/src/cli.ts",
     "gate-matrix": "bun gates/src/matrix.ts",
+    "promote": "bun promote/src/cli.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

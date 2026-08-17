@@ -43,6 +43,15 @@ export type GateOutcome = {
   summary: string;
   /** Optional long form — command output, kept out of the summary line. */
   details?: string;
+  /**
+   * Machine-readable findings, for the steps that run after the gates.
+   *
+   * Deliberately separate from `summary`: the summary is written for a human
+   * reading a PR comment, and the moment something parses it, its wording is a
+   * contract. A gate that discovers a fact worth acting on — the digest it just
+   * pushed, say — states it here instead.
+   */
+  facts?: Record<string, string>;
 };
 
 export type Gate = {

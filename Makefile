@@ -13,8 +13,17 @@ APP_DIR ?= ../greeter
 # for one environment can never be written over another's.
 ENV ?= local
 
+# The application being gated or promoted. Derived from APP_DIR so there is one
+# thing to set, not two that can disagree.
+APP ?= $(notdir $(patsubst %/,%,$(APP_DIR)))
+
+# Where a gate run leaves what it found, and where promotion reads it from.
+# Outside the tree on purpose: it is the output of one run, not a file the
+# repository has an opinion about.
+FACTS ?= /tmp/tarmac-facts.json
+
 .PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix \
-        infra infra-plan infra-fmt ingress argocd aws-endpoint deploy-local
+        infra infra-plan infra-fmt ingress argocd aws-endpoint deploy-local promote
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -73,7 +82,14 @@ status: ## Show what is currently running
 	@./scripts/status.sh
 
 ci: ## Run the gates against APP_DIR, exactly as CI does
-	@bun gates/src/cli.ts --app-dir $(APP_DIR)
+	@bun gates/src/cli.ts --app-dir $(APP_DIR) --facts-out $(FACTS)
+
+# The other half of the pipeline, and deliberately not one of the gates: the
+# gates read and return a verdict, this one edits a manifest and pushes. Running
+# it here can only ever print what it would do — it writes inside GitHub Actions
+# and nowhere else, which is why `make ci` cannot deploy anything.
+promote: ## Show what promoting APP's published digest into gitops/ would change
+	@bun promote/src/cli.ts --facts $(FACTS) --app $(APP)
 
 test: ## Run the platform's own test suite
 	@bun test

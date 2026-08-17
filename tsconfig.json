@@ -18,5 +18,5 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true
   },
-  "include": ["gates"]
+  "include": ["gates", "promote"]
 }

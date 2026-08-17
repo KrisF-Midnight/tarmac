@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { USAGE, UsageError, parseArgs } from "./args";
 import { spawnExec } from "./exec";
+import { collectFacts, renderFacts } from "./facts";
 import { GATES, selectGates } from "./registry";
 import { renderMarkdown, renderTerminal } from "./report";
 import { runGates } from "./runner";
@@ -29,6 +30,14 @@ async function main(argv: string[]): Promise<number> {
 
   if (options.markdownPath) {
     await Bun.write(options.markdownPath, renderMarkdown(runs, verdict));
+  }
+
+  // Written whatever the verdict, and always covering only the gates that
+  // passed. Nothing here decides that a promotion may happen — that is the
+  // release job's dependency on the gate job, one layer up, and duplicating the
+  // decision in both places would mean two answers to the same question.
+  if (options.factsPath) {
+    await Bun.write(options.factsPath, renderFacts(collectFacts(runs)));
   }
 
   return exitCodeFor(verdict);
