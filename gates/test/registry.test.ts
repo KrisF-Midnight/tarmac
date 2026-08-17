@@ -99,6 +99,12 @@ describe("command gates", () => {
 describe("image-publish", () => {
   const pushEnv = { GITHUB_REPOSITORY: "owner/greeter", GITHUB_SHA: "abc123" };
 
+  // Every test below that expects an actual push has to say so: a pull that
+  // succeeds means the commit is already published, which is now a different
+  // code path. `fakeExec` defaults to success, so silence would mean the
+  // opposite of what these tests are about.
+  const notYetPublished = { pull: { code: 1, stderr: "manifest unknown" } };
+
   test("only applies on a push", () => {
     const { exec } = fakeExec();
     const publish = gateById("image-publish")!;
@@ -110,6 +116,7 @@ describe("image-publish", () => {
 
   test("reports the digest it pushed, not the tag it pushed under", async () => {
     const { exec, calls } = fakeExec({
+      ...notYetPublished,
       inspect: { stdout: "ghcr.io/owner/greeter@sha256:" + "d".repeat(64) + "\n" },
     });
 
@@ -117,8 +124,10 @@ describe("image-publish", () => {
       context(exec, { event: "push", env: pushEnv }),
     );
 
-    expect(calls[0]![0]).toBe("docker");
-    expect(calls[0]![1]).toBe("push");
+    // Not `calls[0]` — the reuse probe runs first now. What matters is that a
+    // push happened at all, and that the summary names the digest rather than
+    // the tag it was pushed under.
+    expect(calls).toContainEqual(["docker", "push", "ghcr.io/owner/greeter:abc123"]);
     expect(outcome.status).toBe("passed");
     expect(outcome.summary).toBe("ghcr.io/owner/greeter@sha256:" + "d".repeat(64));
   });
@@ -128,6 +137,7 @@ describe("image-publish", () => {
   // the fact is the contract and may not.
   test("states the digest as a fact, not only in the summary", async () => {
     const { exec } = fakeExec({
+      ...notYetPublished,
       inspect: { stdout: "ghcr.io/owner/greeter@sha256:" + "d".repeat(64) + "\n" },
     });
 
@@ -150,7 +160,7 @@ describe("image-publish", () => {
   });
 
   test("a push that fails does not go on to report a digest", async () => {
-    const { exec } = fakeExec({ push: { code: 1, stderr: "denied" } });
+    const { exec } = fakeExec({ ...notYetPublished, push: { code: 1, stderr: "denied" } });
 
     const outcome = await gateById("image-publish")!.run(
       context(exec, { event: "push", env: pushEnv }),
@@ -161,7 +171,7 @@ describe("image-publish", () => {
   });
 
   test("a push that succeeds but yields no digest fails rather than inventing one", async () => {
-    const { exec } = fakeExec({ inspect: { code: 1, stderr: "no such object" } });
+    const { exec } = fakeExec({ ...notYetPublished, inspect: { code: 1, stderr: "no such object" } });
 
     const outcome = await gateById("image-publish")!.run(
       context(exec, { event: "push", env: pushEnv }),
@@ -177,7 +187,7 @@ describe("image-publish", () => {
   // gate — the two read identically to whoever has to fix it, and one of them
   // says what it saw.
   test("output that is not a repo digest fails the gate rather than throwing", async () => {
-    const { exec } = fakeExec({ inspect: { stdout: "<no value>\n" } });
+    const { exec } = fakeExec({ ...notYetPublished, inspect: { stdout: "<no value>\n" } });
 
     const outcome = await gateById("image-publish")!.run(
       context(exec, { event: "push", env: pushEnv }),
@@ -187,5 +197,115 @@ describe("image-publish", () => {
     expect(outcome.summary).toContain("parse");
     expect(outcome.details).toContain("<no value>");
     expect(outcome.facts).toBeUndefined();
+  });
+});
+
+/**
+ * The defect these cover was found by re-running a green pipeline, not by
+ * reading it: `docker build` stamps a wall-clock into the image config, so the
+ * same commit built twice produced two digests and therefore two deployment
+ * commits for an application that had not changed. Decision 38.
+ *
+ * The property being protected is one sentence — the same commit resolves to
+ * the same digest — and every test here is a way that could stop being true.
+ */
+describe("reusing the image already published for this commit", () => {
+  const pushEnv = { GITHUB_REPOSITORY: "owner/greeter", GITHUB_SHA: "abc123" };
+  const digest = "sha256:" + "d".repeat(64);
+  const reference = `ghcr.io/owner/greeter@${digest}`;
+  const alreadyPublished = { inspect: { stdout: `${reference}\n` } };
+
+  const ran = (calls: string[][], verb: string) =>
+    calls.some((cmd) => cmd[0] === "docker" && cmd[1] === verb);
+
+  test("a re-run of the same commit does not build it again", async () => {
+    const { exec, calls } = fakeExec(alreadyPublished);
+
+    const outcome = await gateById("image-build")!.run(
+      context(exec, { event: "push", env: pushEnv }),
+    );
+
+    expect(outcome.status).toBe("skipped");
+    expect(ran(calls, "build")).toBe(false);
+    expect(outcome.summary).toContain("already built");
+  });
+
+  test("a re-run of the same commit does not push it again", async () => {
+    const { exec, calls } = fakeExec(alreadyPublished);
+
+    const outcome = await gateById("image-publish")!.run(
+      context(exec, { event: "push", env: pushEnv }),
+    );
+
+    expect(outcome.status).toBe("passed");
+    expect(ran(calls, "push")).toBe(false);
+    expect(outcome.facts).toEqual({ image: reference });
+  });
+
+  // The whole point, stated as one assertion: whether the image was built by
+  // this run or by an earlier one, the fact handed to `promote` is the same
+  // string. When it is, promote's no-op path fires and no deployment commit is
+  // produced. When it is not, an unchanged application gets redeployed.
+  test("reuse and a fresh push report the identical digest", async () => {
+    const fresh = fakeExec({ pull: { code: 1 }, ...alreadyPublished });
+    const reused = fakeExec(alreadyPublished);
+    const publish = gateById("image-publish")!;
+    const ctx = { event: "push" as const, env: pushEnv };
+
+    const first = await publish.run(context(fresh.exec, ctx));
+    const second = await publish.run(context(reused.exec, ctx));
+
+    expect(ran(fresh.calls, "push")).toBe(true);
+    expect(ran(reused.calls, "push")).toBe(false);
+    expect(second.facts).toEqual(first.facts!);
+  });
+
+  // A pull request must genuinely build. Its SHA is a merge commit that was
+  // never published, so the lookup would always miss anyway — but the reason
+  // to skip it is that on a PR the build IS the gate, and a gate that can be
+  // satisfied by something already in a registry is not gating this change.
+  test("a pull request builds every time and never consults the registry", async () => {
+    const { exec, calls } = fakeExec(alreadyPublished);
+
+    const outcome = await gateById("image-build")!.run(
+      context(exec, { event: "pull_request", env: pushEnv }),
+    );
+
+    expect(outcome.status).toBe("passed");
+    expect(ran(calls, "build")).toBe(true);
+    expect(ran(calls, "pull")).toBe(false);
+  });
+
+  // Every way of failing to prove the image is there means building it. The
+  // costly outcome is a redundant build; the alternative is deploying a digest
+  // nobody confirmed exists.
+  test("a registry it cannot reach means build, not assume", async () => {
+    const { exec, calls } = fakeExec({ pull: { code: 1, stderr: "unauthorized" } });
+
+    await gateById("image-build")!.run(context(exec, { event: "push", env: pushEnv }));
+
+    expect(ran(calls, "build")).toBe(true);
+  });
+
+  test("a pull that succeeds but inspects to junk means build, not throw", async () => {
+    const { exec, calls } = fakeExec({ inspect: { stdout: "<no value>\n" } });
+
+    const outcome = await gateById("image-build")!.run(
+      context(exec, { event: "push", env: pushEnv }),
+    );
+
+    expect(outcome.status).toBe("passed");
+    expect(ran(calls, "build")).toBe(true);
+  });
+
+  // On a laptop there is no registry to consult and nothing addressable to
+  // reuse; the local path must not start making network calls.
+  test("a local run consults no registry", async () => {
+    const { exec, calls } = fakeExec(alreadyPublished);
+
+    await gateById("image-build")!.run(context(exec, { event: "local" }));
+
+    expect(ran(calls, "pull")).toBe(false);
+    expect(ran(calls, "build")).toBe(true);
   });
 });

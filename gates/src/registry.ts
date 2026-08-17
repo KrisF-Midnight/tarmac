@@ -1,6 +1,6 @@
 import { tail } from "./exec";
 import { IMAGE_FACT } from "./facts";
-import { digestFrom, imageNameFor } from "./image";
+import { type ImageName, digestFrom, imageNameFor } from "./image";
 import type { Gate, GateContext, GateOutcome } from "./types";
 
 /**
@@ -70,6 +70,53 @@ const unitTests: Gate = {
   run: (ctx) => runCommand(ctx, ["bun", "test"], "failing tests"),
 };
 
+/** `ghcr.io/owner/app:sha` and a digest, recombined into something pullable. */
+function referenceFor(image: ImageName, digest: string): string {
+  return `${image.ref.split(":")[0]}@${digest}`;
+}
+
+/**
+ * Has this exact commit already been built and published?
+ *
+ * This exists because `docker build` is not reproducible. Docker stamps a
+ * wall-clock `created` into the image config on every build, so building the
+ * same source twice yields two different digests — and since the digest is what
+ * gets committed to the deployment repo, a re-run of an unchanged pipeline was
+ * producing a fresh commit and rolling the pods for a byte-identical
+ * application. Not a hypothetical: it was found by re-running a green pipeline
+ * and diffing the result. See decision 38.
+ *
+ * The fix is not to make the build reproducible but to not build twice. Images
+ * are already addressed by commit SHA, so that tag is the idempotency key and
+ * it costs nothing to consult. Same commit, same digest, and `promote`'s
+ * no-op-on-unchanged-digest path finally becomes reachable.
+ *
+ * Only on a push. A pull request must genuinely build, every time — the build
+ * IS the gate there, and a PR's SHA is a merge commit that was never published
+ * anyway. Every failure here returns null and falls through to a real build:
+ * not logged in, no such tag, network trouble and a malformed digest are all
+ * the same answer, "cannot prove it is already there", and the safe response to
+ * that is to build.
+ */
+async function publishedDigest(ctx: GateContext, image: ImageName): Promise<string | null> {
+  if (!image.publishable || ctx.event !== "push") return null;
+
+  const pulled = await ctx.exec(["docker", "pull", "--quiet", image.ref], { cwd: ctx.appDir });
+  if (pulled.code !== 0) return null;
+
+  const inspect = await ctx.exec(
+    ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", image.ref],
+    { cwd: ctx.appDir },
+  );
+  if (inspect.code !== 0) return null;
+
+  try {
+    return digestFrom(inspect.stdout);
+  } catch {
+    return null;
+  }
+}
+
 const imageBuild: Gate = {
   id: "image-build",
   title: "Image build",
@@ -79,6 +126,16 @@ const imageBuild: Gate = {
     "merge means the Dockerfile is covered by review like everything else.",
   run: async (ctx) => {
     const image = imageNameFor({ appName: appNameOf(ctx), env: ctx.env });
+
+    // Skipped rather than passed, and the distinction is deliberate: this run
+    // did not build anything, and a gate that says "passed" for work it did not
+    // do is how a pipeline starts lying about what it checked. The commit it
+    // reuses was built and gated on an earlier run of this same gate.
+    const existing = await publishedDigest(ctx, image);
+    if (existing) {
+      return { status: "skipped", summary: `already built: ${referenceFor(image, existing)}` };
+    }
+
     const outcome = await runCommand(
       ctx,
       ["docker", "build", "-t", image.ref, "."],
@@ -109,6 +166,20 @@ const imagePublish: Gate = {
       return { status: "skipped", summary: "no registry context" };
     }
 
+    // Already published for this commit. Passed rather than skipped, because
+    // unlike the build gate this one's job is to state a digest, and it has
+    // one — the same digest an earlier run of this commit published. Stating
+    // the fact is the work, and the work is done.
+    const existing = await publishedDigest(ctx, image);
+    if (existing) {
+      const reference = referenceFor(image, existing);
+      return {
+        status: "passed",
+        summary: `${reference} (published by an earlier run)`,
+        facts: { [IMAGE_FACT]: reference },
+      };
+    }
+
     const pushed = await runCommand(ctx, ["docker", "push", image.ref], "image push failed");
     if (pushed.status !== "passed") return pushed;
 
@@ -137,7 +208,7 @@ const imagePublish: Gate = {
       };
     }
 
-    const reference = `${image.ref.split(":")[0]}@${digest}`;
+    const reference = referenceFor(image, digest);
     return { status: "passed", summary: reference, facts: { [IMAGE_FACT]: reference } };
   },
 };
