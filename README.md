@@ -20,7 +20,8 @@ laptop with no cloud account.
 | kubectl | talks to it | `brew install kubectl` |
 | Terraform | provisions the applications' cloud dependencies, 1.11 or newer | `brew install terraform` |
 
-Later stages add `conftest`, `kyverno`, `trivy` and `argocd`.
+Later stages add `conftest`, `kyverno` and `trivy`. Argo CD is not on this list on purpose:
+`make up` installs it into the cluster, so it costs nothing on the host.
 
 Nothing here needs an AWS account, AWS credentials, or the AWS CLI. The stand-in accepts any
 credentials and `make up` supplies throwaway ones, so a mistake in this stack cannot reach an
@@ -128,9 +129,15 @@ DynamoDB table, and it survives a restart. The state bucket itself is created by
 running inside the stand-in, because a backend cannot create the bucket it stores its own state
 in — which is also why bringing the platform up needs no AWS CLI on the host.
 
-There is no `terraform apply` in CI. CI's copy of the stand-in dies with the job, so an apply
-there would provision something and destroy it in the same breath; CI runs a plan and a module
-test. Terraform owns what lives outside the cluster, Argo owns what lives inside it.
+There is no `terraform apply` in CI, and there should not be: CI's copy of the stand-in dies with
+the job, so an apply there would provision something and destroy it in the same breath. Terraform
+owns what lives outside the cluster, Argo owns what lives inside it.
+
+There is no `terraform plan` in CI either, and that one is a gap rather than a decision. The checks
+that belong there — a plan rendered on the pull request, `terraform validate`, and a `terraform
+test` over the module — exist today only as `make infra-plan` and `make infra-fmt`, which run on a
+laptop and are not required by anything. A change to a shared module can currently reach `main`
+without a plan ever having been read.
 
 ## Breaking glass
 
@@ -162,5 +169,7 @@ every hand edit at once.
 
 ## Status
 
-Early. The cluster lifecycle, the gate pipeline and application infrastructure are in place;
-policies and GitOps delivery land on top of them.
+The cluster lifecycle, the gate pipeline, application infrastructure and GitOps delivery are in
+place: a commit to an application repository reaches the cluster without anyone touching it.
+Policy enforcement lands on top of them, and the gaps named above — Terraform checks in CI,
+security scanning — are open rather than answered.
