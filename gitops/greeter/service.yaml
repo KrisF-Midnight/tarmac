@@ -1,0 +1,21 @@
+# The application's stable in-cluster address.
+#
+# Named port rather than a number, so the ingress in front of it and the probes
+# behind it refer to the same thing by name and a port change is one edit.
+apiVersion: v1
+kind: Service
+metadata:
+  name: greeter
+  namespace: greeter
+  labels:
+    app.kubernetes.io/name: greeter
+    app.kubernetes.io/part-of: tarmac
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: greeter
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

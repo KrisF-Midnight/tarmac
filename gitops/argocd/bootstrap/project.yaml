@@ -1,0 +1,59 @@
+# What a merge into gitops/ is allowed to do to the cluster.
+#
+# This is the deployment side of the trust boundary. CI holds no cluster
+# credentials — it writes git and stops — so the question "what can a commit
+# do?" is answered here rather than by whatever a pipeline's service account
+# happens to be able to reach. Argo CD validates every resource in a sync
+# against this project and refuses the ones that are not listed.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tarmac
+  namespace: argocd
+spec:
+  description: The platform and the application it deploys.
+
+  # One repository. An Application under this project cannot point at somebody
+  # else's git, so a commit cannot redirect the reconciler at content that was
+  # never reviewed here.
+  sourceRepos:
+    - https://github.com/KrisF-Midnight/tarmac.git
+
+  # Two namespaces, both on the local cluster. `argocd` because the root
+  # application manages Application objects, which live there; `greeter` because
+  # that is where the workload runs. A commit cannot deploy into kube-system.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: greeter
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+
+  # Cluster-scoped resources: only namespaces. This is the control that matters
+  # most — without it a merge into gitops/ could create a ClusterRoleBinding and
+  # grant itself anything, which would make the destination restriction above
+  # decorative.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  # Namespaced resources: an allowlist rather than "*", so adding a new kind is a
+  # reviewed change to this file and not a side effect of adding a manifest. The
+  # friction is deliberate and it is small — it is one line per kind, once.
+  #
+  # EndpointSlice is deliberately absent. The application's object-store endpoint
+  # needs one, and it is generated at bootstrap rather than committed, because it
+  # carries an address that is only true on the machine that generated it
+  # (decisions.md, decision 25). Leaving it off this list makes that a structural
+  # rule instead of a convention: if someone commits an EndpointSlice, the sync
+  # fails and says why, rather than quietly working on their laptop.
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: Secret
+    - group: apps
+      kind: Deployment
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: argoproj.io
+      kind: Application

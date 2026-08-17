@@ -1,0 +1,23 @@
+# The application's namespace.
+#
+# Declared here rather than left to the reconciler's CreateNamespace option so
+# that it is a reviewable object with labels, not a side effect of a sync policy.
+# Bootstrap also creates it, because scripts/aws-endpoint-up.sh has to put an
+# EndpointSlice somewhere and may run before the first sync. Both paths are
+# idempotent and neither is load-bearing for the other.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: greeter
+  labels:
+    app.kubernetes.io/name: greeter
+    app.kubernetes.io/part-of: tarmac
+    # Enforced, not audited. This is the namespace an application runs in, and
+    # nothing the application does needs a privileged capability — so the
+    # baseline is the restricted profile, and a manifest that violates it is
+    # rejected at admission rather than reported after the fact. The policy
+    # engine layered on later covers what the built-in profiles do not; this
+    # costs nothing and works before that engine is installed.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted

@@ -1,0 +1,48 @@
+# The application itself: namespace, deployment, service, ingress.
+#
+# This is the file a pipeline's commit ultimately moves — not by editing this
+# Application, but by editing the manifests it points at. Nothing here mentions a
+# version, which is deliberate: the deployed image lives in
+# gitops/greeter/deployment.yaml, so a release is a diff on the thing that
+# describes the workload rather than a parameter on the thing that syncs it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: greeter
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tarmac
+  source:
+    repoURL: https://github.com/KrisF-Midnight/tarmac.git
+    targetRevision: main
+    path: gitops/greeter
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: greeter
+  syncPolicy:
+    automated:
+      prune: true
+      # Reverts a kubectl edit against the running application. Worth being
+      # explicit about what this costs: a `kubectl scale` to survive an incident
+      # is undone within minutes. That is the correct default — the fix belongs
+      # in git — but it is the behaviour that surprises people at 3am, so it is
+      # named here rather than inherited silently.
+      selfHeal: true
+    # No CreateNamespace. The namespace is a manifest in gitops/greeter/, because
+    # it carries the Pod Security Admission labels — and those are a security
+    # control, so they belong in a reviewable file rather than appearing as a side
+    # effect of a sync option. CreateNamespace would produce an unlabelled
+    # namespace and enforce nothing.
+    syncOptions:
+      - ServerSideApply=true
+    # See the note in local-aws.yaml: sync waves cannot order these two
+    # applications, and the ordering they suggest is circular anyway, so it is
+    # resolved by retrying at the resource level instead.
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 2m

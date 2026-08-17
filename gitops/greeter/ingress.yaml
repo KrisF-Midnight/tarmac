@@ -1,0 +1,30 @@
+# How a browser on the host reaches the application.
+#
+# No host rule. The reviewer's entry point is http://localhost:8080, and a
+# hostname would mean either editing /etc/hosts or sending a Host header from a
+# smoke test — a prerequisite that buys nothing in a single-application local
+# environment. In a real environment this carries the hostname and a TLS block;
+# that difference is per-environment, which is the same seam decision 25 draws.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: greeter
+  namespace: greeter
+  labels:
+    app.kubernetes.io/name: greeter
+    app.kubernetes.io/part-of: tarmac
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # Everything, because the application serves both its API and the
+          # bundled SPA from the same process (decision 15) — there is no split
+          # between a static origin and an API origin to express here.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: greeter
+                port:
+                  name: http

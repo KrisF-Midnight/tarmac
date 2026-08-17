@@ -19,12 +19,13 @@ fi
 
 kubectl config use-context "kind-$CLUSTER_NAME" >/dev/null
 
-# Applied here rather than as a kubeadm patch in cluster.yaml. Kubernetes 1.31+
-# moved kubeadm to v1beta4, where kubeletExtraArgs is a list of name/value pairs
-# instead of a map — the form every ingress-nginx guide still shows silently
-# stopped parsing. A label is the same outcome with nothing to keep in sync.
-log "labelling node for ingress"
-kubectl label node "$CLUSTER_NAME-control-plane" ingress-ready=true --overwrite >/dev/null
+# No ingress-ready label. It used to be applied here, because the upstream
+# kind manifest carried a nodeSelector on it — that selector was dropped in
+# controller-v1.13.0, and what actually schedules the controller onto a
+# single-node cluster is its control-plane tolerations. The label selected
+# nothing and gated nothing, which is worse than absent: it read as the
+# mechanism. What is still required is the extraPortMappings in kind/cluster.yaml,
+# because the controller binds hostPort 80/443 on the node.
 
 log "waiting for the node to be ready"
 kubectl wait --for=condition=Ready node --all --timeout=120s >/dev/null

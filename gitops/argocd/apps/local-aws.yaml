@@ -1,0 +1,72 @@
+# The application's object-store endpoint, as the cluster sees it.
+#
+# Separate from the greeter application on purpose. What is in gitops/local-aws/
+# is the part of the environment that is local-only — a Service pointing at an
+# emulator, and credentials that are not credentials. In a real environment this
+# application is replaced, not edited: the Service and the Secret both disappear,
+# the endpoint becomes the provider's own, and the greeter application next to it
+# does not change at all. Keeping them apart is what makes that swap a deletion
+# rather than a diff.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-aws
+  namespace: argocd
+  # Without this, deleting this file prunes the Application object and orphans
+  # the Service and Secret it created — the cluster keeps resources that nothing
+  # in git describes, which is the exact failure prune exists to prevent.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tarmac
+  source:
+    repoURL: https://github.com/KrisF-Midnight/tarmac.git
+    targetRevision: main
+    path: gitops/local-aws
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: greeter
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    # No sync wave, and the reason is worth writing down because sync waves are
+    # the obvious answer and they do not work here.
+    #
+    # These two applications look ordered: the Service below has to exist before
+    # the greeter pods can pass a readiness probe that talks to it. The instinct
+    # is to put this application in an earlier wave. But Argo CD removed the
+    # health assessment for its own Application CRD in 1.8, and a wave boundary
+    # waits for the previous wave to be synced *and healthy* — so with no health
+    # to report, a wave boundary between two child Applications orders when they
+    # are created and nothing else. It looks like ordering and is not.
+    #
+    # Restoring it is possible: a Lua health check for argoproj.io/Application in
+    # argocd-cm. Rejected, because the ordering it would then give is circular.
+    # This application cannot be created before the greeter namespace exists, and
+    # the greeter application owns that namespace; the greeter application cannot
+    # become healthy before this Service exists. Either wave order deadlocks.
+    #
+    # So the dependency is resolved where it is actually acyclic — at the resource
+    # level. Whichever application syncs first, the loser fails once on a missing
+    # namespace and succeeds on the retry below. selfHeal is what guarantees this
+    # terminates: automated sync will not reattempt a failed sync against the same
+    # commit, so without selfHeal a bootstrap that exhausted its retries would
+    # stay red until the next commit.
+    #
+    # The alternative is hoisting the namespace into a third application or into
+    # bootstrap. Both work; both cost a moving part to save one red tick on a
+    # first sync, and the namespace stops being owned by the thing it is named
+    # after.
+    #
+    # These values are the current defaults for automated sync, restated rather
+    # than inherited. The design depends on this behaviour, and a default that
+    # something depends on should be visible in the file that depends on it.
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 2m

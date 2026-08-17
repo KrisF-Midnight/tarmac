@@ -1,0 +1,39 @@
+# The in-cluster name for the object store.
+#
+# This directory exists only because the local environment stands AWS up in a
+# container beside the cluster instead of consuming a real account. An
+# environment backed by real AWS has no equivalent of this file — it carries the
+# real endpoint and the application is none the wiser. The seam is
+# per-environment, not "how the application always reaches object storage".
+#
+# The Service has no selector, so nothing populates its endpoints: the address is
+# supplied out of band by scripts/aws-endpoint-up.sh, which reads it from the
+# running container. That is the half of decision 25 that git cannot hold,
+# because the value is allocated by the local Docker daemon and is not true on
+# another machine. This half — a name and a port — is true everywhere, so it
+# lives here.
+#
+# Why not simply point the pod at the container's name? Because it works, for a
+# reason outside Kubernetes: CoreDNS falls through to the node's resolver, which
+# under Docker Desktop is a VM-wide proxy that can see every container on the
+# daemon. On Linux Docker Engine that chain does not exist. The name would pass
+# here and fail on a reviewer's machine, at the last step, as a pod that never
+# becomes ready. Resolving through Kubernetes instead is what makes it portable.
+apiVersion: v1
+kind: Service
+metadata:
+  name: aws
+  namespace: greeter
+  labels:
+    app.kubernetes.io/name: aws
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: tarmac-local
+spec:
+  # No selector, deliberately. Endpoints come from the EndpointSlice that
+  # bootstrap generates and label-matches to this Service by name.
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 4566
+      targetPort: 4566
+      protocol: TCP

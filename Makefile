@@ -14,22 +14,50 @@ APP_DIR ?= ../greeter
 ENV ?= local
 
 .PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix \
-        infra infra-plan infra-fmt
+        infra infra-plan infra-fmt ingress argocd aws-endpoint deploy-local
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-# Order matters and is the same order the real thing has: somewhere to run,
-# then the dependencies outside the cluster, then the workloads inside it.
+# Order matters and is the same order the real thing has: somewhere to run, then
+# the dependencies outside the cluster, then the way in, then the reconciler that
+# deploys the workloads. The workloads themselves are not here — they arrive
+# because Argo CD reads gitops/, which is the whole point.
+#
+# Every step is idempotent, because this is the target a newcomer re-runs when
+# something looks wrong.
 up: ## Bring the local platform up
 	@./scripts/cluster-up.sh
 	@./scripts/localstack-up.sh
 	@$(MAKE) --no-print-directory infra
+	@./scripts/ingress-up.sh
+	@./scripts/argocd-up.sh
+	@./scripts/aws-endpoint-up.sh
 
 down: ## Tear the local platform down
 	@./scripts/localstack-down.sh
 	@./scripts/cluster-down.sh
+
+ingress: ## Install or re-apply the ingress controller
+	@./scripts/ingress-up.sh
+
+argocd: ## Install Argo CD and point it at gitops/
+	@./scripts/argocd-up.sh
+
+# Needed again after every emulator restart: the container's address on the
+# cluster network is assigned by Docker and is not stable across restarts. `make
+# status` says when it has gone stale, so this is the fix that follows.
+aws-endpoint: ## Regenerate the emulator's EndpointSlice from its current address
+	@./scripts/aws-endpoint-up.sh
+
+# The inner loop, and the one thing here that is not GitOps. It builds APP_DIR
+# and pushes the image straight into the cluster's image store, so a code change
+# is testable without a registry round trip or a commit. The deployed manifest
+# still comes from git — this only replaces the bytes the tag resolves to, which
+# is why it ends with a restart rather than an edit.
+deploy-local: ## Build APP_DIR and load it into the cluster, bypassing the registry
+	@./scripts/deploy-local.sh $(APP_DIR)
 
 infra: ## Provision APP_DIR's cloud dependencies
 	@./scripts/infra-apply.sh $(APP_DIR) $(ENV)

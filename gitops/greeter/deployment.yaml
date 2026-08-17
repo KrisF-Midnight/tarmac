@@ -1,0 +1,133 @@
+# The application.
+#
+# Everything environment-specific arrives as environment variables, and the
+# application declares none of it (decision 16). What follows is therefore the
+# whole contract between the platform and the workload — if a value is wrong
+# here, the application has no way to notice on its own.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: greeter
+  namespace: greeter
+  labels:
+    app.kubernetes.io/name: greeter
+    app.kubernetes.io/part-of: tarmac
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: greeter
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # With two replicas and a readiness probe that depends on the object store,
+      # surging before terminating is what keeps a rollout from taking the
+      # service down when the dependency is unhealthy: the new pod has to pass
+      # /readyz before the old one goes.
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: greeter
+        app.kubernetes.io/part-of: tarmac
+    spec:
+      # Restricted-profile compliance is enforced at the namespace level, so
+      # these are not belt-and-braces — a pod without them is rejected.
+      securityContext:
+        runAsNonRoot: true
+        # Numeric, not the image's `USER bun`. The kubelet cannot resolve a user
+        # name to check runAsNonRoot, so a named user alone fails the check.
+        # 1000 verified against the image rather than taken from its Dockerfile
+        # comment: `id bun` in oven/bun:1.3.14-alpine reports uid=1000 gid=1000.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: greeter
+          # Built locally and side-loaded into the node by `make deploy-local`;
+          # nothing pulls it. CI replaces this with a digest reference — a tag
+          # names a moving target, a digest names the bytes that passed the
+          # gates. IfNotPresent rather than Never so the same manifest works
+          # once the image does come from a registry.
+          image: greeter:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            # The switch that selects the object store as the greeting's source.
+            # Omit it and the application serves a compiled-in default with a
+            # green readiness probe — a deployment that looks healthy and proves
+            # nothing. This is the single most important line in the file.
+            - name: CONFIG_BUCKET
+              value: greeter-local-config
+            # Where "AWS" is. An in-cluster Service, bound to the emulator by
+            # bootstrap (decision 25) — deliberately not the container's name,
+            # which resolves only under Docker Desktop. Unset, the client would
+            # talk to real AWS rather than erroring (decision 23).
+            - name: AWS_ENDPOINT_URL_S3
+              value: http://aws:4566
+          envFrom:
+            # Region and credentials. Consumed directly by the S3 client under
+            # these exact names, never referenced in the application's source,
+            # so a missing one surfaces only as a failing readiness probe.
+            - secretRef:
+                name: aws-credentials
+          # Two probes, two different questions, and the split is deliberate.
+          # /healthz answers "is the process alive" and touches no dependency, so
+          # an object-store outage cannot turn into a restart loop. /readyz
+          # actually reads from the bucket, so a pod that cannot serve real data
+          # is pulled from the Service instead of serving a default.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            # Generous where it is cheap. Until this passes the other two are
+            # suspended, which keeps a slow first object fetch from being
+            # misread as an unhealthy process.
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          resources:
+            # Set because unset is a scheduling and eviction hazard, not because
+            # these numbers are measured. A Bun process serving a bundled SPA and
+            # one object fetch per request is small; the limit is there to make a
+            # leak visible rather than to shape traffic.
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The root filesystem is read-only, so give the runtime somewhere to
+            # write. Nothing is known to need it — the source is copied in at
+            # build time and Bun bundles in memory — but a runtime that wants a
+            # scratch path fails in a way that reads as an application bug.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,72 @@
+# The only Application applied by hand. Everything else is a file in git that
+# this one discovers.
+#
+# The app-of-apps pattern, and the reason for it here is narrow: it makes the set
+# of deployed things a directory listing. Adding a component is adding a file to
+# gitops/argocd/apps/, and removing one is deleting that file — including the
+# removal, which is the half that usually is not modelled. Without this, adding a
+# component means a second imperative `kubectl apply` and bootstrap grows.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  # Cascades deletion to the children, and through them to the workloads. This
+  # makes `kubectl delete app root -n argocd` a complete uninstall — which is
+  # both the convenience and the footgun, so it is worth knowing it is here.
+  # Bare name, no /background suffix, so deletion is foreground: the Application
+  # sticks around until its resources are actually gone.
+  #
+  # Applying this prints a Kubernetes warning that finalizer names should be
+  # domain-qualified with a path. Expected, and left alone: the bare name is the
+  # form Argo CD's own documentation uses and is not deprecated, and the
+  # qualified spelling of it is not documented at all. A cosmetic warning is
+  # better than guessing at deletion semantics.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tarmac
+  source:
+    repoURL: https://github.com/KrisF-Midnight/tarmac.git
+    # A branch, not a tag or a commit. "Track main" is not "deploy whatever
+    # builds": what moves is the manifest, and the image reference inside it is
+    # written by the pipeline, so a deployment is a commit with an author and a
+    # diff. A real environment would track a tag or a release branch per
+    # environment, which is per-environment configuration — the same seam drawn
+    # elsewhere, not a different mechanism.
+    targetRevision: main
+    path: gitops/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  # No repository credential. The repository is public, so the reconciler needs
+  # nothing to read it, and there is no secret in this file for a reviewer to
+  # wonder about. A private repository is where a deploy key or a GitHub App
+  # installation would go, and it is the only thing that changes.
+  syncPolicy:
+    automated:
+      # Delete what git no longer describes. Prune is the difference between a
+      # reconciler and an installer, and leaving it off is how a cluster
+      # accumulates objects nobody can account for.
+      prune: true
+      # Revert changes made with kubectl. This is the property the whole design
+      # rests on: the cluster is not somewhere state can be edited.
+      selfHeal: true
+    # Applied by hand at bootstrap, then reconciled from here. Without this the
+    # live object keeps the imperative apply's field ownership and shows as
+    # OutOfSync against its own source of truth.
+    syncOptions:
+      - ServerSideApply=true
+    # A first sync races the ingress admission webhook and whatever CRDs are
+    # installed alongside it. Worth knowing what happens without this: automated
+    # sync does not reattempt a sync that failed against the same commit, so a
+    # transient first failure is not retried on the next reconciliation the way
+    # people assume — selfHeal above is what eventually rescues it. This makes
+    # the recovery fast and explicit rather than incidental.
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 2m
