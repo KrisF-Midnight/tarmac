@@ -52,7 +52,7 @@ spec:
           # names a moving target, a digest names the bytes that passed the
           # gates. IfNotPresent rather than Never so the same manifest works
           # once the image does come from a registry.
-          image: greeter:local
+          image: ghcr.io/krisf-midnight/greeter@sha256:1d01369c5c9a4b100fcbc51afade77288f93ba9b983e4cbb80af4fd105a75fff
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
