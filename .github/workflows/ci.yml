@@ -118,6 +118,21 @@ jobs:
           ./scripts/terraform-install.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+      # The security gate shells out to this. Same pinned-and-checksummed
+      # treatment as conftest above, for a weaker reason — this gate reports
+      # rather than blocks — kept because the exception would save nothing.
+      #
+      # The binary is pinned; the findings are not. Trivy fetches its
+      # vulnerability database at scan time, so the same commit scanned a month
+      # apart can report differently. That is the behaviour the gate is
+      # classified around, not a wart in it.
+      - name: Install the pinned trivy
+        working-directory: tarmac
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          ./scripts/trivy-install.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
       # Credentials stay out of the gate code. GITHUB_TOKEN is short-lived and
       # scoped to this repository, which is why no PAT is involved here.
       - name: Log in to the registry

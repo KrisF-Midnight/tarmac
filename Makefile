@@ -24,7 +24,7 @@ FACTS ?= /tmp/tarmac-facts.json
 
 .PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix \
         infra infra-plan infra-fmt ingress argocd aws-endpoint suspend resume promote \
-        admission policy policy-test
+        admission policy policy-test security
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -92,6 +92,12 @@ policy: ## Run the policy gate against APP_DIR
 policy-test: ## Run the policy unit tests
 	@conftest verify --policy policy/kubernetes
 	@conftest verify --policy policy/terraform
+
+# Needs an image to scan, so it is `make ci` minus everything except the build
+# — running `--only security` alone would scan whatever that tag pointed at last
+# time, which is the one result worse than no result.
+security: ## Scan APP_DIR's image, as the pipeline's reporting gate does
+	@bun gates/src/cli.ts --app-dir $(APP_DIR) --only image-build,security
 
 infra: ## Provision APP_DIR's cloud dependencies
 	@./scripts/infra-apply.sh $(APP_DIR) $(ENV)

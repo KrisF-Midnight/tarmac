@@ -52,6 +52,26 @@ CONFTEST_VERSION="0.69.0"
 CONFTEST_URL="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
 # shellcheck disable=SC2034
 CONFTEST_SHA256="96fc2fbf11f0afde51256647127e6f00a64ce839a4d9a0a1aef2426c0e6f4b3f"
+
+# trivy, which scans the built image for the security gate. Same treatment as
+# conftest and for a weaker reason, stated plainly: this one does not decide
+# whether a change may merge — the security gate is reporting, not blocking. It
+# is pinned anyway because a scanner that silently changed what it looks for
+# would change the report without changing the diff, and because "everything we
+# fetch has a checksum" is a rule worth more than the exception would save.
+#
+# Note that pinning the binary does not pin the findings. Trivy fetches its
+# vulnerability database at scan time, which is the point — a scanner frozen
+# against the CVEs of the day it was released reports nothing useful. So the
+# same commit scanned a month apart can produce different findings, and that is
+# the behaviour that makes this gate reporting rather than blocking.
+# shellcheck disable=SC2034
+TRIVY_VERSION="0.74.0"
+# shellcheck disable=SC2034
+TRIVY_URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+# shellcheck disable=SC2034
+TRIVY_SHA256="2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+
 # terraform, which the infra gate runs as `fmt -check` and `validate`. Pinned
 # and checksummed like the rest, and for conftest's reason rather than trivy's:
 # this one blocks a merge.

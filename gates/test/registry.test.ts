@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { GATES, dataDirFor, gateById, moduleDirsIn, selectGates } from "../src/registry";
 import type { Exec, ExecResult, GateContext } from "../src/types";
+import { verdictFrom } from "../src/verdict";
 
 /** Records what was run and replies with whatever the test dictates. */
 function fakeExec(replies: Record<string, Partial<ExecResult>> = {}) {
@@ -51,6 +52,11 @@ describe("the gate registry", () => {
     expect(order.indexOf("typecheck")).toBeLessThan(order.indexOf("image-build"));
     expect(order.indexOf("unit-tests")).toBeLessThan(order.indexOf("image-build"));
     expect(order.indexOf("image-build")).toBeLessThan(order.indexOf("image-publish"));
+
+    // Scanning needs the artefact to exist, and a finding is worth more before
+    // the image is on a public registry than after.
+    expect(order.indexOf("image-build")).toBeLessThan(order.indexOf("security"));
+    expect(order.indexOf("security")).toBeLessThan(order.indexOf("image-publish"));
 
     // The infra gate pulls providers over the network, so it is not cheap — but
     // it is still cheaper than building an image, and a broken module should not
@@ -413,6 +419,171 @@ describe("moduleDirsIn", () => {
 
   test("ignores lines that are not .tf files", () => {
     expect(moduleDirsIn("/i/a/main.tf\n/i/a/README.md\n/i/a/terraform.tfvars")).toEqual(["/i/a"]);
+  });
+});
+
+/**
+ * The security gate is the first reporting gate the platform has, so half of
+ * what these cover is not "does it find CVEs" — it is that a finding is loud
+ * without being fatal, and that the ways scanning can go wrong are all louder
+ * than a clean scan rather than quieter.
+ */
+describe("the security gate", () => {
+  const security = () => gateById("security")!;
+
+  /** Trivy replies with a report; `--version` succeeds by default. */
+  function scanning(findings: unknown[] = [], over: Partial<ExecResult> = {}) {
+    return {
+      "trivy image": {
+        stdout: JSON.stringify({ Results: [{ Target: "greeter", Vulnerabilities: findings }] }),
+        ...over,
+      },
+    };
+  }
+
+  const critical = {
+    VulnerabilityID: "CVE-2024-9999",
+    PkgName: "openssl",
+    InstalledVersion: "3.0.1",
+    FixedVersion: "3.0.2",
+    Severity: "CRITICAL",
+  };
+
+  test("scans the image this commit built, not a tag it might resolve to later", async () => {
+    const { exec, calls } = fakeExec(scanning());
+    const env = { GITHUB_REPOSITORY: "Owner/Greeter", GITHUB_SHA: "abc123" };
+
+    await security().run(context(exec, { env }));
+
+    const scan = calls.find((c) => c[0] === "trivy" && c[1] === "image")!;
+    expect(scan).toContain("ghcr.io/owner/greeter:abc123");
+  });
+
+  // Only what somebody would act on, and only vulnerabilities: the flags are
+  // the scope of the report, so they are part of what the gate promises rather
+  // than an invocation detail.
+  test("asks for HIGH and CRITICAL vulnerabilities in machine-readable form", async () => {
+    const { exec, calls } = fakeExec(scanning());
+
+    await security().run(context(exec));
+
+    const scan = calls.find((c) => c[0] === "trivy" && c[1] === "image")!;
+    expect(scan).toEqual([
+      "trivy",
+      "image",
+      "--quiet",
+      "--format",
+      "json",
+      "--scanners",
+      "vuln",
+      "--severity",
+      "HIGH,CRITICAL",
+      "greeter:local",
+    ]);
+  });
+
+  // Not `--exit-code`. Whether a finding stops the pipeline is this platform's
+  // decision, held in `severity` where the matrix can list it and these tests
+  // can check it — not a flag on somebody else's CLI.
+  test("does not delegate the blocking decision to trivy", async () => {
+    const { exec, calls } = fakeExec(scanning());
+
+    await security().run(context(exec));
+
+    expect(calls.flat()).not.toContain("--exit-code");
+    expect(security().severity).toBe("reporting");
+  });
+
+  test("a clean image passes and names what was looked for", async () => {
+    const { exec } = fakeExec(scanning());
+
+    const outcome = await security().run(context(exec));
+
+    expect(outcome.status).toBe("passed");
+    expect(outcome.summary).toContain("HIGH,CRITICAL");
+    expect(outcome.summary).toContain("greeter:local");
+  });
+
+  test("findings fail the gate, with the counts in the summary and the list in the details", async () => {
+    const { exec } = fakeExec(scanning([critical]));
+
+    const outcome = await security().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toBe("1 CRITICAL — 1 with a fix available");
+    expect(outcome.details).toContain("CVE-2024-9999");
+    expect(outcome.details).toContain("-> 3.0.2");
+  });
+
+  // The classification, stated as a property of the pipeline rather than of the
+  // gate: a critical finding is reported and the run still merges. Everything
+  // else here is detail; this is the decision.
+  test("a critical finding does not fail the run", async () => {
+    const { exec } = fakeExec(scanning([critical]));
+    const gate = security();
+
+    const outcome = await gate.run(context(exec));
+    const verdict = verdictFrom([{ gate, outcome, durationMs: 0 }]);
+
+    expect(verdict.passed).toBe(true);
+    expect(verdict.reportingFailures).toHaveLength(1);
+    expect(verdict.blockingFailures).toHaveLength(0);
+  });
+
+  // Trivy exits zero whether or not it found anything, so a non-zero exit means
+  // the scan did not happen — no such image, or no vulnerability database. That
+  // is the opposite of a clean result and must not read like one.
+  test("a scan that could not run says so rather than reporting nothing found", async () => {
+    const { exec } = fakeExec({
+      "trivy image": { code: 1, stderr: "unable to find the specified image" },
+    });
+
+    const outcome = await security().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("could not scan");
+    expect(outcome.details).toContain("unable to find the specified image");
+  });
+
+  test("a report it cannot read fails with the output attached, not an exception", async () => {
+    const { exec } = fakeExec({ "trivy image": { stdout: "Total: 0 (HIGH: 0)" } });
+
+    const outcome = await security().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("could not read");
+    expect(outcome.details).toContain("Total: 0");
+  });
+
+  // A gate that goes quiet when its tool is missing is indistinguishable from
+  // one that found nothing — and this is the gate whose whole job is to be a
+  // report, so the missing-tool case is exactly where silence would be worst.
+  test("a missing trivy is a failure, not a skip", async () => {
+    const { exec, calls } = fakeExec({ "trivy --version": { code: 127 } });
+
+    const outcome = await security().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("not installed");
+    expect(outcome.details).toContain("brew install trivy");
+    expect(calls.some((c) => c[1] === "image")).toBe(false);
+  });
+
+  test("an exec that throws is the same missing tool, not a broken gate", async () => {
+    const exec: Exec = async () => {
+      throw new Error("spawn trivy ENOENT");
+    };
+
+    const outcome = await security().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("not installed");
+  });
+
+  // Every other gate runs on every event; this one has no `appliesTo` because a
+  // pull request is the run where a finding is still cheap to act on.
+  test("runs on pull requests, where the finding is still cheap to act on", () => {
+    expect(security().appliesTo).toBeUndefined();
   });
 });
 

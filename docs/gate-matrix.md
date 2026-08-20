@@ -14,4 +14,5 @@ request and never stop it.
 | Unit tests | blocking | The app's own statement of what it must do. If the road does not enforce it, the road is optional. |
 | Infrastructure | blocking | The policy rules read the Terraform as text; only Terraform knows the provider schema. A misspelled argument or a dangling reference passes every other gate here and fails at apply, which is the last place where failing is still cheap. |
 | Image build | blocking | An app that does not build cannot deploy. Running it on every PR rather than only on merge means the Dockerfile is covered by review like everything else. |
+| Security | reporting | Known vulnerabilities arrive on a disclosure schedule, not in a diff — blocking on them turns an unrelated CVE into an outage in the fix pipeline, and teams answer that with a blanket ignore file. Reported instead, worst and most fixable first, so skipping one is a decision somebody made. |
 | Image publish | blocking | The digest committed to the deployment repo has to resolve on any machine. A push that silently failed would surface as an ImagePullBackOff much later, far from the cause. |

@@ -4,6 +4,12 @@ import { tail } from "./exec";
 import { IMAGE_FACT } from "./facts";
 import { type ImageName, digestFrom, imageNameFor } from "./image";
 import type { Gate, GateContext, GateOutcome } from "./types";
+import {
+  type Vulnerability,
+  describe,
+  summarise,
+  vulnerabilitiesIn,
+} from "./vulnerabilities";
 
 /**
  * The gates, and the contract they imply.
@@ -448,6 +454,116 @@ const imageBuild: Gate = {
 };
 
 /**
+ * The image, scanned — and the only gate here that does not block.
+ *
+ * That classification is the decision worth arguing about, so here is the
+ * argument. A blocking vulnerability gate fails on a schedule rather than on a
+ * diff: a CVE is published against a base-image package on a Tuesday and every
+ * pipeline in the estate goes red on Wednesday, including the one carrying the
+ * fix for an unrelated outage. Nothing about the change under review got worse.
+ * Teams answer that with a blanket ignore file, and the scanner stops being a
+ * signal at all — a worse outcome than not blocking, because it looks like a
+ * control while enforcing nothing.
+ *
+ * What makes it defensible rather than merely convenient is the second half:
+ * reporting is not silence. The finding lands in the pull request comment with
+ * the fixable ones first, so ignoring one is a decision somebody made rather
+ * than one nobody saw. And the parts of this that a change genuinely can cause
+ * — credentials written into a Terraform provider, an image pulled from
+ * somewhere other than `ghcr.io`, an unpinned tag — are blocking, in the policy
+ * gate, because those fail on the diff.
+ *
+ * Two limits worth stating rather than hiding. Only HIGH and CRITICAL are
+ * requested, because a list nobody reads is not a report. And only the
+ * vulnerability scanner runs, not the secret scanner: a credential baked into
+ * an image layer would not be caught here. The Rego rules see secrets in the
+ * source, which is where ours would come from, and the image case is on the
+ * omissions list.
+ */
+const SCANNED_SEVERITIES = "HIGH,CRITICAL";
+
+async function trivyAvailable(ctx: GateContext): Promise<boolean> {
+  try {
+    const { code } = await ctx.exec(["trivy", "--version"], { cwd: ctx.appDir });
+    return code === 0;
+  } catch {
+    return false;
+  }
+}
+
+const security: Gate = {
+  id: "security",
+  title: "Security",
+  severity: "reporting",
+  rationale:
+    "Known vulnerabilities arrive on a disclosure schedule, not in a diff — blocking on them " +
+    "turns an unrelated CVE into an outage in the fix pipeline, and teams answer that with a " +
+    "blanket ignore file. Reported instead, worst and most fixable first, so skipping one is a " +
+    "decision somebody made.",
+  run: async (ctx) => {
+    if (!(await trivyAvailable(ctx))) {
+      return {
+        status: "failed",
+        summary: "trivy is not installed",
+        details:
+          "The security gate needs trivy on PATH: `brew install trivy`, or see " +
+          "https://trivy.dev/latest/getting-started/installation/. It reports a failure rather " +
+          "than skipping because a gate that goes quiet when its tool is missing is " +
+          "indistinguishable from one that found nothing.",
+      };
+    }
+
+    const image = imageNameFor({ appName: appNameOf(ctx), env: ctx.env });
+
+    const { code, stdout, stderr } = await ctx.exec(
+      [
+        "trivy",
+        "image",
+        "--quiet",
+        "--format",
+        "json",
+        "--scanners",
+        "vuln",
+        "--severity",
+        SCANNED_SEVERITIES,
+        image.ref,
+      ],
+      { cwd: ctx.appDir },
+    );
+
+    // Trivy exits 0 whether or not it found anything — `--exit-code` would move
+    // the blocking decision into a flag, and this platform keeps that decision
+    // in the `severity` field where it can be listed and tested. So a non-zero
+    // exit here means the scan itself did not happen: no such image locally, or
+    // the vulnerability database could not be fetched.
+    if (code !== 0) {
+      return {
+        status: "failed",
+        summary: `could not scan ${image.ref}`,
+        details: tail(`${stdout}\n${stderr}`.trim()),
+      };
+    }
+
+    let vulns: Vulnerability[];
+    try {
+      vulns = vulnerabilitiesIn(stdout);
+    } catch {
+      return {
+        status: "failed",
+        summary: "could not read the scan report",
+        details: tail(stdout),
+      };
+    }
+
+    if (vulns.length === 0) {
+      return { status: "passed", summary: `no ${SCANNED_SEVERITIES} findings in ${image.ref}` };
+    }
+
+    return { status: "failed", summary: summarise(vulns), details: describe(vulns) };
+  },
+};
+
+/**
  * Publishing is the one gate that changes the outside world, so it is confined
  * to a merge. On a pull request the image is built and thrown away; nothing
  * reaches the registry until the change is on the default branch. Registry
@@ -522,7 +638,23 @@ function appNameOf(ctx: GateContext): string {
 // Policy first: it needs no install, no network and no Docker, so it is the
 // cheapest thing in the list that can fail — and the ordering rule above is
 // that the cheapest failure comes first.
-export const GATES: Gate[] = [policy, deps, typecheck, unitTests, infra, imageBuild, imagePublish];
+//
+// Security sits between building the image and publishing it, which is the
+// only place it can sit: it scans an artefact, so the artefact has to exist,
+// and a finding is worth more before the image is on a public registry than
+// after. It does not block the publish — it is a reporting gate — but the
+// ordering is what the run reads like, and reading like an afterthought is how
+// a check becomes one.
+export const GATES: Gate[] = [
+  policy,
+  deps,
+  typecheck,
+  unitTests,
+  infra,
+  imageBuild,
+  security,
+  imagePublish,
+];
 
 export function gateById(id: string): Gate | undefined {
   return GATES.find((g) => g.id === id);
