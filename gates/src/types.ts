@@ -27,7 +27,19 @@ export type ExecResult = {
  * the test suite can hand them a fake and assert on what a gate does with an
  * exit code without needing Docker, a network, or the app repo on disk.
  */
-export type Exec = (cmd: string[], opts?: { cwd?: string }) => Promise<ExecResult>;
+export type Exec = (
+  cmd: string[],
+  opts?: {
+    cwd?: string;
+    /**
+     * Added to the inherited environment, not a replacement for it. A gate that
+     * had to name every variable its tool needs would break the moment one of
+     * them started reading a new one; what a gate wants is to override a
+     * specific variable and leave PATH and the rest alone.
+     */
+    env?: Record<string, string>;
+  },
+) => Promise<ExecResult>;
 
 /**
  * Does this path exist? Injected for the same reason `exec` is: a gate that

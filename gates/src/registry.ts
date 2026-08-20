@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { tail } from "./exec";
 import { IMAGE_FACT } from "./facts";
 import { type ImageName, digestFrom, imageNameFor } from "./image";
@@ -198,6 +199,179 @@ const unitTests: Gate = {
   run: (ctx) => runCommand(ctx, ["bun", "test"], "failing tests"),
 };
 
+/**
+ * The Terraform, checked for the two things the policy gate cannot see.
+ *
+ * `policy` already reads these same files, so it is worth being precise about
+ * what this adds. The Rego in `policy/terraform/` parses HCL as source and
+ * judges it against rules this platform wrote — is the bucket encrypted, is
+ * public access blocked. It has no idea what arguments the AWS provider
+ * actually accepts, so a misspelled attribute or a reference to a resource that
+ * does not exist sails straight through it and fails at `apply`, which is the
+ * one place left where failing is expensive. `terraform validate` knows the
+ * provider schema and catches exactly that class.
+ *
+ * `fmt -check` is here for a smaller reason and gets a free ride: formatting
+ * arguments are the cheapest possible review comment to stop having.
+ *
+ * Placed after the unit tests rather than next to `policy`, where it reads more
+ * naturally, because the order in this file is cost and not theme. `init` pulls
+ * the AWS provider down over the network — this is the most expensive gate that
+ * runs before the image is built, and everything above it can fail in seconds.
+ *
+ * Blocking, and terraform being absent fails rather than skips, for the reason
+ * the policy gate gives at length.
+ */
+const INFRA_DIR = "infra";
+
+async function terraformAvailable(ctx: GateContext): Promise<boolean> {
+  try {
+    const { code } = await ctx.exec(["terraform", "version"], { cwd: ctx.appDir });
+    return code === 0;
+  } catch {
+    // Bun throws rather than returning 127 when the binary does not exist.
+    return false;
+  }
+}
+
+/**
+ * The directories `validate` has to be pointed at, derived from where the `.tf`
+ * files actually are.
+ *
+ * Not a fixed path, because the two repositories on this road disagree about
+ * the shape: an application keeps one root module at `infra/`, while the
+ * platform keeps a child module at `infra/modules/app-dependencies/` and
+ * nothing at the top. Hardcoding either would silently validate nothing in the
+ * other, and a gate that checks nothing is the failure mode this platform keeps
+ * legislating against.
+ *
+ * Pure, and separate from the command that feeds it, so the test for "which
+ * directories" does not need a filesystem.
+ */
+/**
+ * Where this gate is allowed to keep Terraform's working directory.
+ *
+ * Not `.terraform/` next to the module, which is the default, and the reason is
+ * a defect this gate hit on its first real run. A developer who has run
+ * `make infra` has a `.terraform/` that already records the S3 backend, and
+ * Terraform reads that record even under `-backend=false` — so `init` went
+ * looking for AWS credentials and the gate failed on a laptop while passing on
+ * a fresh CI checkout. The parity claim this platform makes would have been
+ * false, and quietly.
+ *
+ * Pointing TF_DATA_DIR somewhere else fixes it in both directions: the gate
+ * cannot be confused by a developer's working state, and cannot corrupt it
+ * either. Derived from the module path rather than randomised, so the provider
+ * cache survives between runs — the second run is fast — and so a test can
+ * assert the exact value.
+ */
+export function dataDirFor(module: string): string {
+  return join(tmpdir(), "tarmac-terraform", module.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+/, ""));
+}
+
+export function moduleDirsIn(findOutput: string): string[] {
+  const dirs = findOutput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith(".tf"))
+    .map((file) => dirname(file));
+
+  return [...new Set(dirs)].sort();
+}
+
+const infra: Gate = {
+  id: "infra",
+  title: "Infrastructure",
+  severity: "blocking",
+  rationale:
+    "The policy rules read the Terraform as text; only Terraform knows the provider schema. A " +
+    "misspelled argument or a dangling reference passes every other gate here and fails at " +
+    "apply, which is the last place where failing is still cheap.",
+  run: async (ctx) => {
+    const root = join(ctx.appDir, INFRA_DIR);
+    if (!(await ctx.exists(root))) {
+      return { status: "skipped", summary: `nothing to check: no ${INFRA_DIR}/` };
+    }
+
+    if (!(await terraformAvailable(ctx))) {
+      return {
+        status: "failed",
+        summary: "terraform is not installed",
+        details:
+          "The infra gate needs terraform on PATH: `brew install terraform`, or see " +
+          "https://developer.hashicorp.com/terraform/install. It fails rather than skips " +
+          "because a gate that skips when its tool is missing reports success for work it " +
+          "did not do.",
+      };
+    }
+
+    // Formatting first: it needs no providers and no network, so the cheap half
+    // of this gate still fails fast even though the gate as a whole is not cheap.
+    const fmt = await ctx.exec(
+      ["terraform", "fmt", "-check", "-recursive", "-diff", "-no-color", root],
+      { cwd: ctx.appDir },
+    );
+    if (fmt.code !== 0) {
+      return {
+        status: "failed",
+        summary: `${INFRA_DIR}/ is not formatted`,
+        details: tail(`${fmt.stdout}\n${fmt.stderr}`.trim()),
+      };
+    }
+
+    // `.terraform` is a previous init's provider cache, and any `.tf` inside it
+    // is somebody else's module vendored by Terraform itself. Pruned for the
+    // same reason the policy gate ignores it.
+    const found = await ctx.exec(
+      ["find", root, "-name", ".terraform", "-prune", "-o", "-name", "*.tf", "-print"],
+      { cwd: ctx.appDir },
+    );
+    const modules = moduleDirsIn(found.stdout);
+
+    if (modules.length === 0) {
+      return { status: "skipped", summary: `nothing to check: no .tf files under ${INFRA_DIR}/` };
+    }
+
+    for (const module of modules) {
+      const env = { TF_DATA_DIR: dataDirFor(module) };
+
+      // `-backend=false` because validating does not need state, and asking for
+      // it would mean this gate held a credential to the real backend. The
+      // pipeline is not allowed one — that is decision 36, and it applies to
+      // reads as much as to writes.
+      const init = await ctx.exec(
+        ["terraform", `-chdir=${module}`, "init", "-backend=false", "-input=false", "-no-color"],
+        { cwd: ctx.appDir, env },
+      );
+      if (init.code !== 0) {
+        return {
+          status: "failed",
+          summary: `terraform init failed in ${module}`,
+          details: tail(`${init.stdout}\n${init.stderr}`.trim()),
+        };
+      }
+
+      const validate = await ctx.exec(
+        ["terraform", `-chdir=${module}`, "validate", "-no-color"],
+        { cwd: ctx.appDir, env },
+      );
+      if (validate.code !== 0) {
+        return {
+          status: "failed",
+          summary: `invalid Terraform in ${module}`,
+          details: tail(`${validate.stdout}\n${validate.stderr}`.trim()),
+        };
+      }
+    }
+
+    return {
+      status: "passed",
+      summary: `${modules.length} module(s) formatted and valid`,
+      details: modules.join("\n"),
+    };
+  },
+};
+
 /** `ghcr.io/owner/app:sha` and a digest, recombined into something pullable. */
 function referenceFor(image: ImageName, digest: string): string {
   return `${image.ref.split(":")[0]}@${digest}`;
@@ -348,7 +522,7 @@ function appNameOf(ctx: GateContext): string {
 // Policy first: it needs no install, no network and no Docker, so it is the
 // cheapest thing in the list that can fail — and the ordering rule above is
 // that the cheapest failure comes first.
-export const GATES: Gate[] = [policy, deps, typecheck, unitTests, imageBuild, imagePublish];
+export const GATES: Gate[] = [policy, deps, typecheck, unitTests, infra, imageBuild, imagePublish];
 
 export function gateById(id: string): Gate | undefined {
   return GATES.find((g) => g.id === id);

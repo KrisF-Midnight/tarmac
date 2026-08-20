@@ -12,5 +12,6 @@ request and never stop it.
 | Dependencies | blocking | A lockfile that disagrees with package.json means the build resolved something nobody reviewed. Installing frozen makes that a failure instead of a silent resolution. |
 | Types | blocking | A type error is a defect the compiler already found. Letting it through would mean the pipeline knowingly shipped a known bug, and the fix is always cheap. |
 | Unit tests | blocking | The app's own statement of what it must do. If the road does not enforce it, the road is optional. |
+| Infrastructure | blocking | The policy rules read the Terraform as text; only Terraform knows the provider schema. A misspelled argument or a dangling reference passes every other gate here and fails at apply, which is the last place where failing is still cheap. |
 | Image build | blocking | An app that does not build cannot deploy. Running it on every PR rather than only on merge means the Dockerfile is covered by review like everything else. |
 | Image publish | blocking | The digest committed to the deployment repo has to resolve on any machine. A push that silently failed would surface as an ImagePullBackOff much later, far from the cause. |

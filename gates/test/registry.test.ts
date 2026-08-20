@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GATES, gateById, selectGates } from "../src/registry";
+import { GATES, dataDirFor, gateById, moduleDirsIn, selectGates } from "../src/registry";
 import type { Exec, ExecResult, GateContext } from "../src/types";
 
 /** Records what was run and replies with whatever the test dictates. */
@@ -51,6 +51,12 @@ describe("the gate registry", () => {
     expect(order.indexOf("typecheck")).toBeLessThan(order.indexOf("image-build"));
     expect(order.indexOf("unit-tests")).toBeLessThan(order.indexOf("image-build"));
     expect(order.indexOf("image-build")).toBeLessThan(order.indexOf("image-publish"));
+
+    // The infra gate pulls providers over the network, so it is not cheap — but
+    // it is still cheaper than building an image, and a broken module should not
+    // wait behind one.
+    expect(order.indexOf("unit-tests")).toBeLessThan(order.indexOf("infra"));
+    expect(order.indexOf("infra")).toBeLessThan(order.indexOf("image-build"));
   });
 });
 
@@ -228,6 +234,185 @@ describe("command gates", () => {
 
     expect(calls[0]).toEqual(["docker", "build", "-t", "ghcr.io/owner/greeter:abc123", "."]);
     expect(outcome.summary).toBe("ghcr.io/owner/greeter:abc123");
+  });
+});
+
+/**
+ * The infra gate. What these cover is mostly the two ways it could quietly
+ * check nothing — no terraform on PATH, and pointing `validate` at a directory
+ * that holds no `.tf` — plus the fact that it never asks for backend state.
+ */
+describe("the infra gate", () => {
+  const infra = () => gateById("infra")!;
+
+  /** `find` output for a tree, in the order find emits it. */
+  const found = (...files: string[]) => ({ find: { stdout: files.join("\n") } });
+
+  test("blocks, because an invalid module fails at apply and nowhere earlier", () => {
+    expect(infra().severity).toBe("blocking");
+  });
+
+  test("skips when the app has no infra/ at all", async () => {
+    const { exec, calls } = fakeExec();
+
+    const outcome = await infra().run(context(exec, { exists: only("gitops") }));
+
+    expect(outcome.status).toBe("skipped");
+    expect(calls).toEqual([]);
+  });
+
+  test("fails rather than skips when terraform is missing", async () => {
+    const { exec } = fakeExec({ "terraform version": { code: 127 } });
+
+    const outcome = await infra().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toBe("terraform is not installed");
+  });
+
+  test("fails rather than skips when terraform is missing and bun throws", async () => {
+    const exec: Exec = async (cmd) => {
+      if (cmd[0] === "terraform") throw new Error("ENOENT");
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    const outcome = await infra().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toBe("terraform is not installed");
+  });
+
+  test("checks formatting before pulling any provider down", async () => {
+    const { exec, calls } = fakeExec({
+      "fmt -check": { code: 3, stdout: "-  bucket = var.b\n+  bucket = var.b" },
+    });
+
+    const outcome = await infra().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toBe("infra/ is not formatted");
+    expect(outcome.details).toContain("bucket");
+    // Nothing after fmt ran, which is the point of ordering it first.
+    expect(calls.flat()).not.toContain("init");
+  });
+
+  test("validates every directory holding .tf, not a hardcoded path", async () => {
+    const { exec, calls } = fakeExec(
+      found("/repos/greeter/infra/modules/a/main.tf", "/repos/greeter/infra/modules/b/main.tf"),
+    );
+
+    const outcome = await infra().run(context(exec));
+
+    expect(outcome.status).toBe("passed");
+    const chdirs = calls.flat().filter((arg) => arg.startsWith("-chdir="));
+    expect(chdirs).toEqual([
+      "-chdir=/repos/greeter/infra/modules/a",
+      "-chdir=/repos/greeter/infra/modules/a",
+      "-chdir=/repos/greeter/infra/modules/b",
+      "-chdir=/repos/greeter/infra/modules/b",
+    ]);
+  });
+
+  // Decision 36: the pipeline holds no credential that reaches real state, and
+  // that applies to reading it as much as to writing it.
+  test("never initialises the backend", async () => {
+    const { exec, calls } = fakeExec(found("/repos/greeter/infra/main.tf"));
+
+    await infra().run(context(exec));
+
+    expect(calls.flat()).toContain("-backend=false");
+  });
+
+  /**
+   * The defect this gate hit on its first real run. A developer with a previous
+   * `make infra` behind them has a `.terraform/` recording the S3 backend, and
+   * Terraform honours that record even under `-backend=false` — so the gate went
+   * looking for AWS credentials on a laptop and passed on a fresh CI checkout.
+   * Isolating the data directory is what keeps the two paths the same.
+   */
+  test("never touches the developer's own .terraform directory", async () => {
+    const envs: (Record<string, string> | undefined)[] = [];
+    const exec: Exec = async (cmd, opts) => {
+      envs.push(opts?.env);
+      return { code: 0, stdout: cmd[0] === "find" ? "/repos/greeter/infra/main.tf" : "", stderr: "" };
+    };
+
+    await infra().run(context(exec));
+
+    const dataDirs = envs.filter(Boolean).map((e) => e!.TF_DATA_DIR);
+    expect(dataDirs.length).toBe(2); // init and validate
+    for (const dir of dataDirs) {
+      expect(dir).toBe(dataDirFor("/repos/greeter/infra"));
+      expect(dir).not.toContain("/repos/greeter/infra/.terraform");
+    }
+  });
+
+  test("skips when infra/ exists but holds no .tf files", async () => {
+    const { exec, calls } = fakeExec(found(""));
+
+    const outcome = await infra().run(context(exec));
+
+    expect(outcome.status).toBe("skipped");
+    expect(calls.flat()).not.toContain("validate");
+  });
+
+  test("a provider that cannot be fetched fails as init, not as invalid HCL", async () => {
+    const { exec } = fakeExec({
+      ...found("/repos/greeter/infra/main.tf"),
+      init: { code: 1, stderr: "Failed to query available provider packages" },
+    });
+
+    const outcome = await infra().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("terraform init failed");
+  });
+
+  test("reports the module a validation error came from", async () => {
+    const { exec } = fakeExec({
+      ...found("/repos/greeter/infra/main.tf"),
+      validate: { code: 1, stderr: 'An argument named "bucketz" is not expected here.' },
+    });
+
+    const outcome = await infra().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toBe("invalid Terraform in /repos/greeter/infra");
+    expect(outcome.details).toContain("bucketz");
+  });
+});
+
+describe("dataDirFor", () => {
+  test("is outside the module, so the gate cannot read or write its working state", () => {
+    const module = "/repos/greeter/infra";
+
+    expect(dataDirFor(module).startsWith(module)).toBe(false);
+  });
+
+  test("is stable for a module, so the provider cache survives between runs", () => {
+    expect(dataDirFor("/repos/greeter/infra")).toBe(dataDirFor("/repos/greeter/infra"));
+  });
+
+  test("two modules never share one", () => {
+    expect(dataDirFor("/repos/a/infra")).not.toBe(dataDirFor("/repos/b/infra"));
+  });
+});
+
+describe("moduleDirsIn", () => {
+  test("one directory per module, deduplicated and sorted", () => {
+    expect(moduleDirsIn("/i/b/main.tf\n/i/a/main.tf\n/i/a/variables.tf\n")).toEqual([
+      "/i/a",
+      "/i/b",
+    ]);
+  });
+
+  test("no .tf files means no directories, not the current one", () => {
+    expect(moduleDirsIn("")).toEqual([]);
+    expect(moduleDirsIn("\n  \n")).toEqual([]);
+  });
+
+  test("ignores lines that are not .tf files", () => {
+    expect(moduleDirsIn("/i/a/main.tf\n/i/a/README.md\n/i/a/terraform.tfvars")).toEqual(["/i/a"]);
   });
 });
 

@@ -52,3 +52,28 @@ CONFTEST_VERSION="0.69.0"
 CONFTEST_URL="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
 # shellcheck disable=SC2034
 CONFTEST_SHA256="96fc2fbf11f0afde51256647127e6f00a64ce839a4d9a0a1aef2426c0e6f4b3f"
+# terraform, which the infra gate runs as `fmt -check` and `validate`. Pinned
+# and checksummed like the rest, and for conftest's reason rather than trivy's:
+# this one blocks a merge.
+#
+# The checksum below was not copied from the release page. It was produced by
+# downloading the artefact and hashing it, then compared against upstream's
+# SHA256SUMS — which is the only ordering that catches the case where the
+# published sums are the thing that moved.
+#
+# 1.15.9 against `required_version = ">= 1.11"` in both configurations. Note
+# that a laptop is not held to this pin: fmt and validate are stable surfaces,
+# and a developer on 1.14 gets the same answer. What must not differ is the
+# configuration, which is in these repositories.
+#
+# On the licence, since a new joiner will ask: Terraform has been BUSL since 1.6,
+# which restricts offering it as a competing product and not running it in your
+# own pipeline. OpenTofu is the drop-in if that ever changes — the configuration
+# here uses nothing specific to either, so the migration is this pin and the
+# binary name.
+# shellcheck disable=SC2034
+TERRAFORM_VERSION="1.15.9"
+# shellcheck disable=SC2034
+TERRAFORM_URL="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+# shellcheck disable=SC2034
+TERRAFORM_SHA256="76edd0b22d2f27d3d2e097cd793209646f719cf60f02ff3af626b07361137da1"

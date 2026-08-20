@@ -104,6 +104,20 @@ jobs:
           ./scripts/conftest-install.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+      # The infra gate shells out to this. Same treatment and the same reason as
+      # conftest: it blocks a merge, so its provenance is not delegated to a
+      # marketplace action.
+      #
+      # Note what this costs — terraform is a ~120MB download on every run, and
+      # the gate then pulls the AWS provider on top of it. Paid because the
+      # alternative is finding a misspelled provider argument at apply time.
+      - name: Install the pinned terraform
+        working-directory: tarmac
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          ./scripts/terraform-install.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
       # Credentials stay out of the gate code. GITHUB_TOKEN is short-lived and
       # scoped to this repository, which is why no PAT is involved here.
       - name: Log in to the registry

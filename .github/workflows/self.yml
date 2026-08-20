@@ -44,6 +44,12 @@ jobs:
           ./scripts/conftest-install.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+      - name: Install the pinned terraform
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          ./scripts/terraform-install.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
       # Rules that have never been shown to reject anything are indistinguishable
       # from rules that do not work.
       - run: make policy-test
@@ -52,8 +58,14 @@ jobs:
       # own Terraform and its own manifests are held to the standard it imposes
       # on applications — a policy set its author is exempt from is a policy set
       # nobody has had to live with.
+      #
+      # `infra` alongside `policy` for the same reason. The module this platform
+      # ships to every application is the one piece of Terraform here, and it is
+      # validated by the same gate the applications get rather than by a step
+      # written specially for it. Note that it validates as a child module: no
+      # backend, no provider block, nothing to configure.
       - name: Gate the platform with its own policies
-        run: bun gates/src/cli.ts --app-dir . --only policy
+        run: bun gates/src/cli.ts --app-dir . --only policy,infra
 
       # The shell that survives is the shell nobody has read since it was
       # written, so it gets a linter rather than trust.

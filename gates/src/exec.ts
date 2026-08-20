@@ -11,6 +11,9 @@ import type { Exec, ExecResult } from "./types";
 export const spawnExec: Exec = async (cmd, opts = {}): Promise<ExecResult> => {
   const proc = Bun.spawn(cmd, {
     cwd: opts.cwd,
+    // Merged onto the real environment rather than replacing it: PATH is how
+    // every one of these commands is found in the first place.
+    env: opts.env ? { ...process.env, ...opts.env } : undefined,
     stdout: "pipe",
     stderr: "pipe",
   });
