@@ -56,7 +56,7 @@ spec:
           # bytes uniquely, so re-pulling it can only return what is cached. The
           # pull that matters happens anyway, because a changed digest is by
           # definition an image the node does not have.
-          image: ghcr.io/krisf-midnight/greeter@sha256:4ef0455991b2c13781fe0dc720b060987002d67fede65c9d1e5cb8d59092a3d3
+          image: ghcr.io/krisf-midnight/greeter@sha256:5d80fd62614986413f50f1f331412a8d6efd28c059698d41c542041fac27fb06
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
