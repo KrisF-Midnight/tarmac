@@ -1,0 +1,110 @@
+# Image provenance, enforced by the API server itself.
+#
+# This is the same rule as policy/kubernetes/images.rego, deliberately stated
+# twice in two places. The Rego copy runs before a merge and catches the mistake
+# where it is cheap to fix; this copy runs on every request the API server
+# receives, including the ones that never went near a pull request. Neither
+# subsumes the other: a pre-merge check cannot see a `kubectl apply`, and an
+# admission check cannot tell anyone about a problem until somebody is already
+# trying to deploy it.
+#
+# A ValidatingAdmissionPolicy rather than a policy engine. CEL is evaluated
+# in-process by the API server: there is no controller to install, no webhook
+# certificate to rotate, and — the reason that matters most here — no failure
+# mode where a policy component being down blocks every pod creation in the
+# cluster. The cost is that this cannot do anything a CEL expression cannot
+# express, and cannot see resources that already exist. Both are written up in
+# docs/decisions.md.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tarmac-require-pinned-images
+spec:
+  # The default, stated anyway. A policy that fails open when the API server
+  # cannot evaluate it is a policy that reports success for the requests it
+  # understood least.
+  failurePolicy: Fail
+
+  matchConstraints:
+    resourceRules:
+      # Pods are the enforcement point: every route into the cluster ends in a
+      # pod create, whether it came from a Deployment, a Job, or somebody's
+      # terminal. The controller kinds below are here for the error message,
+      # not for the enforcement — without them a bad Deployment is accepted and
+      # the failure surfaces minutes later in a ReplicaSet event nobody is
+      # watching.
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+
+  variables:
+    # One expression that reaches the containers of every kind matched above.
+    # CronJob is deliberately absent from the match rules: its template sits a
+    # level deeper, and the pod rule catches it anyway when the job it spawns
+    # actually runs.
+    - name: podSpec
+      expression: "has(object.spec.template) ? object.spec.template.spec : object.spec"
+    - name: containers
+      expression: >-
+        variables.podSpec.containers +
+        (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : [])
+    - name: offending
+      expression: >-
+        variables.containers.filter(c,
+          !c.image.startsWith('ghcr.io/') || !c.image.contains('@sha256:'))
+
+  validations:
+    - expression: "variables.offending.size() == 0"
+      reason: Forbidden
+      messageExpression: >-
+        'images must come from ghcr.io/ and be pinned by digest, not by tag: ' +
+        variables.offending.map(c, c.name + ' -> ' + c.image).join(', ')
+---
+# What the policy applies to. Split from the policy on purpose: the policy says
+# what "acceptable" means and the binding says where that opinion holds, so
+# changing the scope never touches the rule.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tarmac-require-pinned-images
+spec:
+  policyName: tarmac-require-pinned-images
+  validationActions: [Deny]
+  matchResources:
+    # Excluded, not included — and that is the whole design.
+    #
+    # Scoping by an opt-in label would reproduce the flaw this policy set exists
+    # to close: Pod Security Admission is switched on per namespace by a label,
+    # so a namespace created without it silently gets nothing. A policy that can
+    # only see namespaces somebody remembered to label cannot police its own
+    # adoption either.
+    #
+    # So every namespace is in scope and the exceptions are named. A new
+    # namespace is covered by default, and adding an exception is a diff to this
+    # file that a reviewer sees.
+    #
+    # The listed namespaces are the platform's own machinery, installed by
+    # `make up` from upstream manifests that scripts/versions.sh pins by SHA-256.
+    # Their provenance answer is that checksum, not this rule — asking upstream
+    # to publish digest-pinned images to ghcr.io is not a thing this platform
+    # gets to decide.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - local-path-storage
+            - ingress-nginx
+            - argocd

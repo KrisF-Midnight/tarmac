@@ -41,6 +41,15 @@ describe("renderTerminal", () => {
     expect(renderTerminal(runs, verdictFrom(runs), false)).toContain("TS2304");
   });
 
+  // A gate can pass and still carry a finding it classified as worth
+  // reporting. Printing detail only on failure would hide those findings in
+  // exactly the runs where they are cheapest to act on.
+  test("detail from a gate that passed is shown too", () => {
+    const runs = [run("policy", "blocking", "passed", "WARN - a secret in git")];
+
+    expect(renderTerminal(runs, verdictFrom(runs), false)).toContain("a secret in git");
+  });
+
   test("emits no escape codes when colour is off", () => {
     const runs = [run("a", "blocking", "passed")];
 

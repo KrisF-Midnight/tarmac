@@ -29,11 +29,28 @@ export type ExecResult = {
  */
 export type Exec = (cmd: string[], opts?: { cwd?: string }) => Promise<ExecResult>;
 
+/**
+ * Does this path exist? Injected for the same reason `exec` is: a gate that
+ * decides what to check based on what is on disk should be testable without
+ * building the disk first.
+ */
+export type PathExists = (path: string) => Promise<boolean>;
+
 export type GateContext = {
   /** Absolute path to the application repository being gated. */
   appDir: string;
+  /**
+   * Absolute path to the platform repository — this one — supplying the gates.
+   *
+   * Only the policy gate needs it, and it needs it because the rules it
+   * enforces are the platform's, not the application's. An app cannot be asked
+   * to carry a copy of the policies it is judged against: it would be free to
+   * edit them, which is the same as having no policy at all.
+   */
+  platformDir: string;
   event: Event;
   exec: Exec;
+  exists: PathExists;
   env: Record<string, string | undefined>;
 };
 

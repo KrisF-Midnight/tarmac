@@ -7,7 +7,15 @@ const neverRuns: Exec = async () => {
 };
 
 function context(overrides: Partial<GateContext> = {}): GateContext {
-  return { appDir: "/tmp/app", event: "local", exec: neverRuns, env: {}, ...overrides };
+  return {
+    appDir: "/tmp/app",
+    platformDir: "/tmp/tarmac",
+    event: "local",
+    exec: neverRuns,
+    exists: async () => true,
+    env: {},
+    ...overrides,
+  };
 }
 
 function gate(id: string, over: Partial<Gate> = {}): Gate {

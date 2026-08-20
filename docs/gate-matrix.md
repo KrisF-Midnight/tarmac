@@ -8,6 +8,7 @@ request and never stop it.
 
 | Gate | Severity | Why |
 |---|---|---|
+| Policy | blocking | The same rules the cluster enforces at admission, applied where they are still cheap to fix. A violation caught here is a review comment; caught at admission it is a failed deploy with the change already merged. |
 | Dependencies | blocking | A lockfile that disagrees with package.json means the build resolved something nobody reviewed. Installing frozen makes that a failure instead of a silent resolution. |
 | Types | blocking | A type error is a defect the compiler already found. Letting it through would mean the pipeline knowingly shipped a known bug, and the fix is always cheap. |
 | Unit tests | blocking | The app's own statement of what it must do. If the road does not enforce it, the road is optional. |

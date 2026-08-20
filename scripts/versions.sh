@@ -37,3 +37,18 @@ ARGOCD_VERSION="v3.5.1"
 ARGOCD_MANIFEST_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
 # shellcheck disable=SC2034
 ARGOCD_MANIFEST_SHA256="795a3a972224da6a7f9d32c3e946445f062b60fb46028476715affeb688236e3"
+
+# conftest, which runs the Rego in policy/ as the pipeline's first gate. Pinned
+# here rather than installed by a marketplace action: this is the tool that
+# decides whether a change is allowed to merge, so its provenance deserves the
+# same checksum every other fetched artefact in this file gets.
+#
+# The checksum is of the Linux x86_64 tarball, because that is what the runner
+# is. A laptop installs it from a package manager instead — see
+# scripts/conftest-install.sh for why that asymmetry is deliberate.
+# shellcheck disable=SC2034
+CONFTEST_VERSION="0.69.0"
+# shellcheck disable=SC2034
+CONFTEST_URL="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+# shellcheck disable=SC2034
+CONFTEST_SHA256="96fc2fbf11f0afde51256647127e6f00a64ce839a4d9a0a1aef2426c0e6f4b3f"

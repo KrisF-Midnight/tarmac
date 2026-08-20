@@ -92,6 +92,18 @@ jobs:
         working-directory: tarmac
         run: bun install --frozen-lockfile
 
+      # The policy gate shells out to this. Installed from a pinned release with
+      # its checksum verified rather than from a marketplace action, because it
+      # is the tool that decides whether a change may merge — see
+      # scripts/versions.sh. Into RUNNER_TEMP rather than /usr/local/bin so no
+      # step here needs root.
+      - name: Install the pinned conftest
+        working-directory: tarmac
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          ./scripts/conftest-install.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
       # Credentials stay out of the gate code. GITHUB_TOKEN is short-lived and
       # scoped to this repository, which is why no PAT is involved here.
       - name: Log in to the registry

@@ -36,6 +36,25 @@ jobs:
       # Documentation that claims to describe the code, verified against it.
       - run: make check-gate-matrix
 
+      # Same install as the application pipeline gets, from the same pinned
+      # release and the same script. See ci.yml.
+      - name: Install the pinned conftest
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          ./scripts/conftest-install.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # Rules that have never been shown to reject anything are indistinguishable
+      # from rules that do not work.
+      - run: make policy-test
+
+      # And then the rules themselves, against this repository. The platform's
+      # own Terraform and its own manifests are held to the standard it imposes
+      # on applications — a policy set its author is exempt from is a policy set
+      # nobody has had to live with.
+      - name: Gate the platform with its own policies
+        run: bun gates/src/cli.ts --app-dir . --only policy
+
       # The shell that survives is the shell nobody has read since it was
       # written, so it gets a linter rather than trust.
       - name: Lint the platform scripts

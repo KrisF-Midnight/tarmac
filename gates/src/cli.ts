@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { USAGE, UsageError, parseArgs } from "./args";
 import { spawnExec } from "./exec";
+import { statExists } from "./fs";
 import { collectFacts, renderFacts } from "./facts";
 import { GATES, selectGates } from "./registry";
 import { renderMarkdown, renderTerminal } from "./report";
@@ -20,8 +21,14 @@ async function main(argv: string[]): Promise<number> {
 
   const runs = await runGates(gates, {
     appDir: resolve(options.appDir),
+    // Derived from where this file is, not from an argument or an environment
+    // variable. The platform's policies are wherever the platform's code is;
+    // making it configurable would let a caller point the policy gate at a
+    // directory of their own, which is a check that always passes.
+    platformDir: resolve(import.meta.dir, "..", ".."),
     event: options.event,
     exec: spawnExec,
+    exists: statExists,
     env: Bun.env,
   });
 

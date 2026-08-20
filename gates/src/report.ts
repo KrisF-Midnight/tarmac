@@ -41,9 +41,14 @@ export function renderTerminal(runs: GateRun[], verdict: Verdict, colour = true)
     );
   }
 
-  // Failure detail goes after the summary block, not inline, so the shape of
-  // the run stays readable when several gates fail at once.
-  for (const run of [...verdict.blockingFailures, ...verdict.reportingFailures]) {
+  // Detail goes after the summary block, not inline, so the shape of the run
+  // stays readable when several gates have something to say.
+  //
+  // Any gate with detail, not only the failed ones: a gate can pass and still
+  // be carrying a finding it classified as worth reporting, and detail that is
+  // printed only on failure would make those findings invisible in exactly the
+  // runs where somebody could act on them cheaply.
+  for (const run of runs) {
     if (!run.outcome.details) continue;
     lines.push("", `--- ${run.gate.title} ---`, run.outcome.details);
   }
@@ -85,10 +90,8 @@ export function renderMarkdown(runs: GateRun[], verdict: Verdict): string {
     ...rows,
   ];
 
-  const failures = [...verdict.blockingFailures, ...verdict.reportingFailures].filter(
-    (r) => r.outcome.details,
-  );
-  for (const run of failures) {
+  // Collapsed, and present for anything with detail — see renderTerminal.
+  for (const run of runs.filter((r) => r.outcome.details)) {
     out.push(
       "",
       `<details><summary>${run.gate.title} — ${run.outcome.summary}</summary>`,

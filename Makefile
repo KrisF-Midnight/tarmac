@@ -23,21 +23,28 @@ APP ?= $(notdir $(patsubst %/,%,$(APP_DIR)))
 FACTS ?= /tmp/tarmac-facts.json
 
 .PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix \
-        infra infra-plan infra-fmt ingress argocd aws-endpoint suspend resume promote
+        infra infra-plan infra-fmt ingress argocd aws-endpoint suspend resume promote \
+        admission policy policy-test
 
 help: ## Show the available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-# Order matters and is the same order the real thing has: somewhere to run, then
-# the dependencies outside the cluster, then the way in, then the reconciler that
-# deploys the workloads. The workloads themselves are not here — they arrive
-# because Argo CD reads gitops/, which is the whole point.
+# Order matters and is the same order the real thing has: somewhere to run, the
+# rules that govern what may run there, then the dependencies outside the
+# cluster, then the way in, then the reconciler that deploys the workloads. The
+# workloads themselves are not here — they arrive because Argo CD reads gitops/,
+# which is the whole point.
+#
+# Admission comes second, immediately after the cluster exists and before
+# anything has been deployed into it. A policy installed after the workloads is
+# a policy that never saw them.
 #
 # Every step is idempotent, because this is the target a newcomer re-runs when
 # something looks wrong.
 up: ## Bring the local platform up
 	@./scripts/cluster-up.sh
+	@./scripts/admission-up.sh
 	@./scripts/localstack-up.sh
 	@$(MAKE) --no-print-directory infra
 	@./scripts/ingress-up.sh
@@ -69,6 +76,22 @@ suspend: ## Break glass: stop Argo CD reconciling, so kubectl edits stick
 
 resume: ## Hand the cluster back to git, reverting anything edited by hand
 	@./scripts/reconcile.sh resume
+
+admission: ## Install or re-apply the cluster's admission policies
+	@./scripts/admission-up.sh
+
+# The pre-merge half of the same rules, run on its own. `make ci` runs it too,
+# as the first gate — this is the shortcut for when policy is the thing being
+# worked on and the rest of the pipeline is noise.
+policy: ## Run the policy gate against APP_DIR
+	@bun gates/src/cli.ts --app-dir $(APP_DIR) --only policy
+
+# The policies' own tests. Rules that have never been shown to reject anything
+# are indistinguishable from rules that do not work, so these run in CI beside
+# the platform's TypeScript tests rather than as an optional extra.
+policy-test: ## Run the policy unit tests
+	@conftest verify --policy policy/kubernetes
+	@conftest verify --policy policy/terraform
 
 infra: ## Provision APP_DIR's cloud dependencies
 	@./scripts/infra-apply.sh $(APP_DIR) $(ENV)

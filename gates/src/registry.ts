@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { tail } from "./exec";
 import { IMAGE_FACT } from "./facts";
 import { type ImageName, digestFrom, imageNameFor } from "./image";
@@ -31,6 +32,133 @@ async function runCommand(
     details: tail(`${stdout}\n${stderr}`.trim()),
   };
 }
+
+/**
+ * Policy, checked against the files rather than against the cluster.
+ *
+ * The rules live in `policy/` in this repository and are enforced twice, on
+ * purpose. `policy/admission/` states them as ValidatingAdmissionPolicies that
+ * the API server applies to every request it receives; `policy/kubernetes/` and
+ * `policy/terraform/` state them in Rego, which is what this gate runs. Neither
+ * copy makes the other redundant: admission cannot tell anybody about a problem
+ * until somebody is already deploying it, and a pre-merge check cannot see a
+ * `kubectl apply`. Keeping them in step is a real cost, paid deliberately, and
+ * the policy unit tests are what stop them drifting silently.
+ *
+ * Note which directory each policy set finds here. An application repository
+ * has `infra/` and so is judged by the Terraform rules; the Kubernetes rules
+ * fire when the platform gates *itself*, because that is where the manifests
+ * live. That asymmetry is the deployment topology, not an oversight.
+ *
+ * Blocking, and the tool being missing is a failure rather than a skip. A gate
+ * that quietly does nothing when its tool is absent produces a green run that
+ * checked nothing, which is worse than a red one.
+ */
+const POLICY_TARGETS = [
+  { dir: "infra", policies: "terraform" },
+  { dir: "gitops", policies: "kubernetes" },
+] as const;
+
+/**
+ * `.terraform` holds provider binaries and a copy of state, and `node_modules`
+ * holds somebody else's YAML. Neither is authored here, and neither is present
+ * in CI — so scanning them would mean the laptop and the pipeline disagree
+ * about what was checked, which is the one thing this platform claims not to do.
+ */
+const IGNORED_PATHS = "(\\.terraform|node_modules)";
+
+async function conftestAvailable(ctx: GateContext): Promise<boolean> {
+  try {
+    const { code } = await ctx.exec(["conftest", "--version"], { cwd: ctx.appDir });
+    return code === 0;
+  } catch {
+    // Bun throws rather than returning 127 when the binary does not exist.
+    return false;
+  }
+}
+
+/**
+ * Warnings, counted off the output.
+ *
+ * conftest exits 0 on a `warn` and non-zero on a `deny`, which is exactly the
+ * blocking/reporting split this platform already draws, one level further down.
+ * So the gate passes — and still says how many findings it is carrying, because
+ * a reported finding nobody sees is not reported.
+ */
+function warningsIn(stdout: string): string[] {
+  return stdout.split("\n").filter((line) => line.startsWith("WARN"));
+}
+
+const policy: Gate = {
+  id: "policy",
+  title: "Policy",
+  severity: "blocking",
+  rationale:
+    "The same rules the cluster enforces at admission, applied where they are still cheap to " +
+    "fix. A violation caught here is a review comment; caught at admission it is a failed " +
+    "deploy with the change already merged.",
+  run: async (ctx) => {
+    if (!(await conftestAvailable(ctx))) {
+      return {
+        status: "failed",
+        summary: "conftest is not installed",
+        details:
+          "The policy gate needs conftest on PATH: `brew install conftest`, or see " +
+          "https://www.conftest.dev/install/. It fails rather than skips because a gate " +
+          "that skips when its tool is missing reports success for work it did not do.",
+      };
+    }
+
+    const checked: string[] = [];
+    const warnings: string[] = [];
+
+    for (const target of POLICY_TARGETS) {
+      const dir = join(ctx.appDir, target.dir);
+      if (!(await ctx.exists(dir))) continue;
+
+      const { code, stdout, stderr } = await ctx.exec(
+        [
+          "conftest",
+          "test",
+          "--no-color",
+          "--ignore",
+          IGNORED_PATHS,
+          "--policy",
+          join(ctx.platformDir, "policy", target.policies),
+          dir,
+        ],
+        { cwd: ctx.appDir },
+      );
+
+      if (code !== 0) {
+        return {
+          status: "failed",
+          summary: `policy violations in ${target.dir}/`,
+          details: tail(`${stdout}\n${stderr}`.trim()),
+        };
+      }
+
+      checked.push(`${target.dir}/`);
+      warnings.push(...warningsIn(stdout));
+    }
+
+    // Nothing to judge is not the same as judged and clean. An app with neither
+    // directory has no infrastructure and no manifests of its own, and saying
+    // "passed" would credit it for a check that never ran.
+    if (checked.length === 0) {
+      return { status: "skipped", summary: `nothing to check: no ${POLICY_TARGETS.map((t) => `${t.dir}/`).join(" or ")}` };
+    }
+
+    const where = checked.join(", ");
+    if (warnings.length === 0) return { status: "passed", summary: `${where} clean` };
+
+    return {
+      status: "passed",
+      summary: `${where}: ${warnings.length} finding(s), reported not blocking`,
+      details: warnings.join("\n"),
+    };
+  },
+};
 
 /**
  * Installing is setup, not a check — except that `--frozen-lockfile` turns it
@@ -217,7 +345,10 @@ function appNameOf(ctx: GateContext): string {
   return ctx.appDir.split("/").filter(Boolean).pop() ?? "app";
 }
 
-export const GATES: Gate[] = [deps, typecheck, unitTests, imageBuild, imagePublish];
+// Policy first: it needs no install, no network and no Docker, so it is the
+// cheapest thing in the list that can fail — and the ordering rule above is
+// that the cheapest failure comes first.
+export const GATES: Gate[] = [policy, deps, typecheck, unitTests, imageBuild, imagePublish];
 
 export function gateById(id: string): Gate | undefined {
   return GATES.find((g) => g.id === id);

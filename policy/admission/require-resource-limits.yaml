@@ -1,0 +1,80 @@
+# Resource requests and limits, enforced by the API server itself.
+#
+# The pre-merge twin is policy/kubernetes/resources.rego. See
+# require-pinned-images.yaml for why both exist and why this is a
+# ValidatingAdmissionPolicy rather than a policy engine.
+#
+# Worth stating plainly what this is not: it is not a substitute for a
+# LimitRange or a ResourceQuota. A LimitRange supplies a default, which means a
+# pod with no limits is admitted with somebody else's numbers attached — quiet,
+# and frequently wrong. This rejects instead, so the number is always one the
+# workload's author chose. A quota caps the namespace total and says nothing
+# about an individual container, which is the failure this rule is about.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tarmac-require-resource-limits
+spec:
+  failurePolicy: Fail
+
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+
+  variables:
+    - name: podSpec
+      expression: "has(object.spec.template) ? object.spec.template.spec : object.spec"
+    - name: containers
+      expression: >-
+        variables.podSpec.containers +
+        (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : [])
+    # `has()` on the resources block first: a container that declares no
+    # resources at all has no `requests` key to read, and reaching into it
+    # without the guard is an evaluation error rather than a policy violation.
+    # With failurePolicy: Fail that error would still reject the pod — for the
+    # wrong reason, with a message about CEL rather than about limits.
+    - name: offending
+      expression: >-
+        variables.containers.filter(c,
+          !has(c.resources) ||
+          !has(c.resources.requests) || !('cpu' in c.resources.requests) || !('memory' in c.resources.requests) ||
+          !has(c.resources.limits) || !('cpu' in c.resources.limits) || !('memory' in c.resources.limits))
+
+  validations:
+    - expression: "variables.offending.size() == 0"
+      reason: Forbidden
+      messageExpression: >-
+        'every container must declare cpu and memory requests and limits; missing on: ' +
+        variables.offending.map(c, c.name).join(', ')
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tarmac-require-resource-limits
+spec:
+  policyName: tarmac-require-resource-limits
+  validationActions: [Deny]
+  matchResources:
+    # The same exclusions, for the same reason. See require-pinned-images.yaml.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - local-path-storage
+            - ingress-nginx
+            - argocd

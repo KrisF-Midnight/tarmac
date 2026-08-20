@@ -28,6 +28,30 @@ else
   exit 0
 fi
 
+# Admission policies, and specifically whether each one is bound.
+#
+# An unbound ValidatingAdmissionPolicy is the failure this block exists for: the
+# object is present, `kubectl get` lists it, and it evaluates nothing. Reporting
+# "2 policies" without checking would be a status line that says the cluster is
+# protected when it is not, which is worse than no line at all.
+read -ra policies <<<"$(kc get validatingadmissionpolicy \
+  -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)"
+bound="$(kc get validatingadmissionpolicybinding \
+  -o jsonpath='{range .items[*]}{.spec.policyName}{"\n"}{end}' 2>/dev/null)"
+
+if ((${#policies[@]} == 0)); then
+  echo "admission no policies — anything can be applied. Run 'make admission'."
+else
+  echo "admission ${#policies[@]} policies"
+  for policy in "${policies[@]}"; do
+    if grep -qx "$policy" <<<"$bound"; then
+      printf '  %-36s enforcing\n' "$policy" | indent
+    else
+      printf '  %-36s NOT BOUND — evaluates nothing\n' "$policy" | indent
+    fi
+  done
+fi
+
 if localstack_running; then
   echo "aws       up ($AWS_ENDPOINT_URL)"
   # What has actually been provisioned, rather than what the container claims.
