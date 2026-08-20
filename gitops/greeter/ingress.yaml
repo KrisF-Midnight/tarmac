@@ -1,6 +1,6 @@
 # How a browser on the host reaches the application.
 #
-# No host rule. The reviewer's entry point is http://localhost:8080, and a
+# No host rule. Whoever runs this locally hits http://localhost:8080, and a
 # hostname would mean either editing /etc/hosts or sending a Host header from a
 # smoke test — a prerequisite that buys nothing in a single-application local
 # environment. In a real environment this carries the hostname and a TLS block;

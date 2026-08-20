@@ -17,7 +17,7 @@
 # reason outside Kubernetes: CoreDNS falls through to the node's resolver, which
 # under Docker Desktop is a VM-wide proxy that can see every container on the
 # daemon. On Linux Docker Engine that chain does not exist. The name would pass
-# here and fail on a reviewer's machine, at the last step, as a pod that never
+# here and fail on someone else's machine, at the last step, as a pod that never
 # becomes ready. Resolving through Kubernetes instead is what makes it portable.
 apiVersion: v1
 kind: Service

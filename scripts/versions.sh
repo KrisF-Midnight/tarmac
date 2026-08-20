@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Pinned versions of everything the platform installs into the cluster.
+# Pinned versions of everything the platform installs — into the cluster, and
+# into the machine that runs the pipeline.
 #
 # One file so a bump is one reviewable diff, and so "which version are we on?"
 # has an answer that is not `grep -r`. Each pin carries a checksum as well as a
 # tag: a tag is a pointer and can be moved, and these manifests are fetched over
 # the network at bootstrap. The checksum is the actual pin — it is what makes a
-# reviewer's bootstrap the same as the one this repo was tested against.
+# newcomer's bootstrap the same as the one this repo was tested against.
 #
 # Sourced by lib.sh, not run directly.
 

@@ -70,7 +70,7 @@ sha256_of() {
 # Download a manifest and refuse it unless it is byte-for-byte what this repo was
 # tested against. The tag in the URL is a pointer and can be moved; the checksum
 # is the actual pin. Without this, "pinned to v3.5.1" means "pinned to whatever
-# that tag points at on the day the reviewer runs it".
+# that tag points at on the day someone runs it".
 fetch_pinned() {
   local url="$1" want="$2" dest="$3" got
   require_cmd curl
