@@ -37,6 +37,17 @@ spec:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["pods"]
+      # `kubectl debug` creates no pod. It PATCHes one that already exists
+      # through the ephemeralcontainers subresource, and a rule naming `pods`
+      # does not match a subresource — so without this line an arbitrary image
+      # joins a running pod's namespaces with none of the above applying to it.
+      # UPDATE only: the subresource has no create verb. Named in full rather
+      # than as `pods/*`, which would also match exec, log, status and binding —
+      # requests carrying objects this rule has nothing to say about.
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["pods/ephemeralcontainers"]
       - apiGroups: ["apps"]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
@@ -53,10 +64,19 @@ spec:
     # actually runs.
     - name: podSpec
       expression: "has(object.spec.template) ? object.spec.template.spec : object.spec"
+    # `ephemeralContainers` is not decoration. On the ephemeralcontainers
+    # subresource the object under review is a whole Pod, so `containers` is
+    # populated with the pod's original images — which were admitted by this
+    # policy already and will pass again. Matching that subresource without
+    # reading the field the request actually changes would approve every debug
+    # container while looking like enforcement. The `has()` guards matter for
+    # the reverse case: on a plain pod or a Deployment template neither field is
+    # set, and reaching into an absent one is an evaluation error.
     - name: containers
       expression: >-
         variables.podSpec.containers +
-        (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : [])
+        (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : []) +
+        (has(variables.podSpec.ephemeralContainers) ? variables.podSpec.ephemeralContainers : [])
     - name: offending
       expression: >-
         variables.containers.filter(c,

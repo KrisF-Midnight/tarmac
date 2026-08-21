@@ -12,6 +12,7 @@ package main
 compliant_container := {
 	"name": "app",
 	"image": "ghcr.io/example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	"env": [{"name": "CONFIG_BUCKET", "value": "example-local-config"}],
 	"resources": {
 		"requests": {"cpu": "25m", "memory": "64Mi"},
 		"limits": {"cpu": "500m", "memory": "256Mi"},
@@ -20,14 +21,31 @@ compliant_container := {
 
 deployment_with(containers) := {
 	"kind": "Deployment",
-	"metadata": {"name": "example"},
+	"metadata": {
+		"name": "example",
+		"labels": {"app.kubernetes.io/name": "example"},
+	},
 	"spec": {"template": {"spec": {"containers": containers}}},
 }
+
+# The same object with the label the config-bucket rule binds its expectation to
+# removed, and nothing else changed.
+deployment_without_app_label(containers) := object.union(
+	object.remove(deployment_with(containers), ["metadata"]),
+	{"metadata": {"name": "example"}},
+)
 
 # A container that is compliant except for the one field named.
 container_without(field) := object.remove(compliant_container, [field])
 
 container_with_image(image) := object.union(compliant_container, {"image": image})
+
+# Replaces the env list wholesale — `object.union` merges objects deeply but
+# takes the right-hand side's arrays as they are, so there is no partial list to
+# be surprised by.
+container_with_env(env) := object.union(compliant_container, {"env": env})
+
+container_with_config_bucket(value) := container_with_env([{"name": "CONFIG_BUCKET", "value": value}])
 
 # Replaces the resources block wholesale. `object.union` merges deeply, so
 # unioning a narrower `resources` onto the fixture would quietly keep the

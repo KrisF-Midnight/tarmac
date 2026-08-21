@@ -19,6 +19,18 @@ spec:
 
   matchConstraints:
     resourceRules:
+      # No `pods/ephemeralcontainers` rule here, unlike the pinned-images
+      # policy, and the omission is deliberate. Kubernetes forbids `resources`
+      # on an ephemeral container outright — the field exists on the type and
+      # the API server rejects any request that sets it — so a rule demanding
+      # requests and limits there could never be satisfied by anyone. Matching
+      # the subresource would not police `kubectl debug`, it would ban it, with
+      # a message telling the operator to add a field the API server will refuse.
+      # The alternative, matching the subresource but only reading `containers`,
+      # re-judges images and limits that were already judged at create time and
+      # finds nothing new. Ephemeral containers do consume unaccounted capacity;
+      # that is a property of the Kubernetes design, not something an admission
+      # rule gets to fix.
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
