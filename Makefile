@@ -154,7 +154,7 @@ gate-matrix: ## Regenerate docs/gate-matrix.md from the gate registry
 # worse than none, so CI regenerates it and fails if the tree disagrees.
 check-gate-matrix: ## Fail if the committed gate matrix is out of date
 	@set -euo pipefail; \
-	generated="$$(mktemp -t gate-matrix)"; \
+	generated="$$(mktemp -t gate-matrix.XXXXXX)"; \
 	trap 'rm -f "$$generated"' EXIT; \
 	bun gates/src/matrix.ts "$$generated" >/dev/null; \
 	diff -u docs/gate-matrix.md "$$generated" \
