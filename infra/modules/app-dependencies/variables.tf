@@ -23,10 +23,18 @@ variable "environment" {
 
 variable "config" {
   description = <<-EOT
-    Configuration the application reads at boot, as object key to contents.
+    Configuration the application reads from S3, as object key to contents.
     Held in S3 rather than baked into the image so the same artefact runs in
-    every environment. Values are not secret — there is a separate mechanism
-    for those, and putting one here would put it in plan output and in git.
+    every environment, and read per request rather than at boot, so a change
+    here takes effect on apply with no rebuild and no restart.
+
+    Nothing here may be secret, and this module offers no alternative for the
+    things that are: values land in plan output, in the state file and in a
+    pull request diff, and no secrets mechanism exists anywhere in this
+    platform. Handling one would mean keeping it out of git altogether —
+    External Secrets, sealed-secrets, a cloud secret store, or the workload's
+    own identity in place of a stored credential — and none of that is
+    modelled here.
   EOT
   type        = map(string)
   default     = {}

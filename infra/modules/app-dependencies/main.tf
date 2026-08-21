@@ -71,14 +71,3 @@ resource "aws_s3_object" "config" {
   # exists in a bucket that is not yet blocked from being made public.
   depends_on = [aws_s3_bucket_public_access_block.config]
 }
-
-# The application is told where its configuration lives rather than having a
-# bucket name compiled into it. One parameter read at boot and the same image
-# runs in every environment, which is what lets the delivery pipeline promote
-# an artefact rather than rebuild one.
-resource "aws_ssm_parameter" "config_bucket" {
-  name  = "/${var.app_name}/${var.environment}/config-bucket"
-  type  = "String"
-  value = aws_s3_bucket.config.id
-  tags  = local.tags
-}

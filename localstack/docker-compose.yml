@@ -26,7 +26,7 @@ services:
       # provider v6 reads bucket tags through ListTagsForResource, which is an
       # s3control call. Without it every tagged bucket fails to create with a
       # 501 that names a service the Terraform never mentions.
-      SERVICES: s3,s3control,ssm
+      SERVICES: s3,s3control
       AWS_DEFAULT_REGION: eu-west-1
       PERSISTENCE: 1
     volumes:
