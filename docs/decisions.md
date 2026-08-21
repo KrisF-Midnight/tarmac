@@ -1,6 +1,6 @@
 # Design Decisions
 
-Forty-eight decisions, why each was made, what was rejected, and what it costs.
+Fifty-seven decisions, why each was made, what was rejected, and what it costs.
 
 A decision that stops being true gets a new entry marking the old one superseded — the wrong turn
 stays in the record.
@@ -45,7 +45,7 @@ stays in the record.
 | [36](#36--the-credential-that-can-deploy-is-never-present-in-the-job-that-runs-application-code) | The credential that can deploy is never present in the job that runs application code |
 | [37](#37--the-promoter-is-versioned-the-manifest-it-edits-is-not) | The promoter is versioned; the manifest it edits is not |
 | [38](#38--an-image-is-built-once-per-commit-and-re-runs-reuse-it) | An image is built once per commit, and re-runs reuse it |
-| [39](#39--the-only-non-gitops-path-is-a-break-glass-pair-that-stops-the-reconciler-not-one-that-deploys) | The only non-GitOps path is a break-glass that stops the reconciler, not one that deploys |
+| [39](#39--the-only-non-gitops-path-is-a-break-glass-pair-that-stops-the-reconciler-not-one-that-deploys) | The only non-GitOps path is a break-glass pair that stops the reconciler, not one that deploys |
 | [40](#40--validatingadmissionpolicy-at-admission-not-kyverno) | ValidatingAdmissionPolicy at admission, not Kyverno — supersedes half of 11 |
 | [41](#41--the-rego-reads-source-files-not-plan-json) | The Rego reads source files, not plan JSON — supersedes half of 11 |
 | [42](#42--the-admission-bindings-are-scoped-by-exclusion-never-by-an-opt-in-label) | The admission bindings are scoped by exclusion, never by an opt-in label |
@@ -55,6 +55,15 @@ stays in the record.
 | [46](#46--the-image-scan-reports-it-does-not-block) | The image scan reports, it does not block |
 | [47](#47--terraform-is-checked-by-a-gate-not-by-a-ci-step-and-it-is-hermetic) | Terraform is checked by a gate, not by a CI step, and it is hermetic |
 | [48](#48--one-admission-probe-per-policy-and-the-install-blocks-until-each-is-refused) | One admission probe per policy, and the install blocks until each is refused |
+| [49](#49--the-config-bucket-is-found-by-convention-not-published-to-a-parameter-store) | The config bucket is found by convention, not published to a parameter store |
+| [50](#50--the-base-image-pin-is-enforced-by-a-gate-that-reads-the-dockerfile) | The base image pin is enforced by a gate that reads the Dockerfile |
+| [51](#51--the-manifests-config-bucket-name-is-checked-against-the-modules-convention) | The manifest's config bucket name is checked against the module's convention — closes a cost in 49 |
+| [52](#52--the-naming-expression-is-asserted-from-the-terraform-side-as-well) | The naming expression is asserted from the Terraform side as well — completes 51 |
+| [53](#53--the-bucket-name-rule-is-scoped-by-the-modules-signature-not-by-the-locals-name) | The bucket-name rule is scoped by the module's signature, not by the local's name — supersedes a cost in 52 |
+| [54](#54--the-environment-enum-is-checked-from-the-terraform-side) | The environment enum is checked from the Terraform side — closes a cost in 52 |
+| [55](#55--the-kubernetes-policy-set-is-enforced-by-the-platforms-own-pipeline) | The Kubernetes policy set is enforced by the platform's own pipeline |
+| [56](#56--image-pinning-follows-kubectl-debug-resource-limits-deliberately-do-not) | Image pinning follows `kubectl debug`; resource limits deliberately do not |
+| [57](#57--the-admission-policies-are-tested-by-evaluating-their-cel-without-a-cluster) | The admission policies are tested by evaluating their CEL, without a cluster |
 
 ---
 
@@ -907,7 +916,7 @@ a real one, and it is the reason a break-glass pair still exists.
 
 **Why.** The gate job checks out an application repository and runs its test suite, its build and its
 lockfile install. That is arbitrary code from a repository the platform does not control, executing on
-a runner. If the token that can commit to the deployment repository were in that job's environment, a
+a runner. If the token that can commit the promoted digest were in that job's environment, a
 single malicious or compromised dependency in any onboarded application could read it and write
 whatever it liked into `gitops/` — which is to say, deploy anything to the cluster. So promotion is a
 separate job. The gate job passes a digest forward through `needs:`; it never sees the token, and the
@@ -956,7 +965,7 @@ should have been moved.
 
 **Why.** `docker build` is not reproducible. Docker stamps a wall-clock `created` into the image
 config on every build, so the same source produces a different digest each time — and the digest is
-what gets committed to the deployment repository. The consequence was found by re-running a green
+what gets committed into `gitops/`. The consequence was found by re-running a green
 pipeline with nothing changed: two runs of greeter `370c013` produced `sha256:1d01369c5c9a` and then
 `sha256:4ef0455991b2`, and therefore two deployment commits rolling the pods for a byte-identical
 application. Worth naming how it was found — the pipeline was green both times, so no amount of
@@ -1392,6 +1401,293 @@ The honest fix is generating the probes from the policies, and it is not done.
 
 ---
 
+### 49 — The config bucket is found by convention, not published to a parameter store
+
+**Why.** The module created an SSM parameter holding the bucket name, and the README described the
+bucket as "discoverable through SSM". Nothing read it. The application receives `CONFIG_BUCKET` as an
+environment variable from its Deployment, and that manifest states the name as a literal. The
+parameter was a third copy of a string two places already carried, with no consumer — dead
+infrastructure that read as a working discovery mechanism, which is worse than an absent one. It is
+gone, along with the `ssm` service from the emulator's service list and the output that re-exported
+it.
+
+The seam it appeared to cover is real, and was never covered by it. Terraform derives the name as
+`"${var.app_name}-${var.environment}-config"`; `gitops/greeter/deployment.yaml` states the result.
+Nothing checks the two agree. What makes that survivable is that it fails loudly: a wrong name is a
+404 on the object, an exception on the greeting path, a 503 from `/readyz`, and a rollout that never
+completes (30). A wrong bucket cannot produce a pod quietly serving the wrong thing.
+
+**Rejected.** *Keeping the parameter and having the application read it* — an AWS SDK dependency in
+the app, rejected in 16 and 23, to resolve a name fully determined by two variables it already knows.
+*Keeping it unread, as documentation* — infrastructure that exists to be read by humans is a comment
+with a bill and a blast radius. *Injecting the name into the manifest at deploy time* — deploy-time
+templating, rejected in 37.
+
+**Cost.** The naming convention is now written twice, once in HCL and once as a YAML literal, with
+nothing enforcing that they agree. A Rego rule over the Deployment could enforce it and is not
+written. Decision 13 rejected Garage partly for "losing SSM"; that reason no longer counts against
+it, though the digest-pin and persistence reasons stand on their own.
+
+---
+
+### 50 — The base image pin is enforced by a gate that reads the Dockerfile
+
+**Why.** Two digest rules already existed and neither one looked at a `FROM` line.
+`policy/kubernetes/images.rego` reads the manifests before merge and the `require-pinned-images`
+policy reads admission requests at runtime; both take a Kubernetes container image as their input.
+Revert greeter's base image from `oven/bun:1.3.14-alpine@sha256:…` to the mutable tag and every gate
+stays green. "Everything this platform runs is pinned to a digest" was enforced for the top layer and
+asserted by convention for everything underneath it.
+
+The pinned conftest has a native Dockerfile parser, so this is a third Rego policy set rather than
+new tooling. It runs first, ahead of `policy`: it parses one file, and what it guards is the input to
+`image-build`, the most expensive blocking gate. Blocking. Every `FROM` is judged, each unpinned
+stage reported separately; `scratch` and references to an earlier stage are exempt, because there is
+nothing in a registry to pin. A `${TAG}` fed from an `ARG` with a default is resolved; an `ARG` with
+no default is its own finding, because an image chosen at build time cannot be pinned by reading the
+file.
+
+**Rejected.** *A third `POLICY_TARGETS` row on the existing `policy` gate* — that list maps a
+directory to a policy set, this is one file with a different parser, and folding it in would hide the
+severity, ordering and rationale the generated matrix states per gate. *hadolint* — a second linter
+whose surface is mostly opinions this repository has no position on, to get one rule. *Leaving it to
+admission* — impossible in principle: no Kubernetes object records what an image was built on.
+
+**Cost.** A fourth place the digest rule is written, and the only one with no runtime counterpart, so
+it is a merge-time check with nothing behind it. `ARG` resolution stops at one level — an `ARG`
+defined in terms of another is denied rather than resolved. And the gate reads the repository-root
+Dockerfile only, matching what `docker build .` consumes; an application that builds from somewhere
+else is unchecked, and nothing says so.
+
+---
+
+### 51 — The manifest's config bucket name is checked against the module's convention
+
+*Closes a cost accepted in 49.*
+
+**Why.** 49 left the naming convention written twice — derived in HCL as
+`"${var.app_name}-${var.environment}-config"`, restated as a literal in
+`gitops/greeter/deployment.yaml` — with nothing linking them, and recorded that a Rego rule could
+enforce it and was not written. It is written now, as two rules in the existing Kubernetes policy
+set rather than a new gate: same parser, same directory, same input, same conftest invocation.
+
+The expected name is bound to the workload's own `app.kubernetes.io/name` label, and the environment
+segment must be one of the three values the module's `variables.tf` allows. So the application half
+is anchored to something the object asserts about itself, not to a string in the rule. The second
+rule denies a container that sets `CONFIG_BUCKET` on an object carrying no app label — without it,
+the policy is switchable off per workload by deleting a line, and a skipped check and a passing check
+look identical in the output.
+
+**Rejected.** *Adding a `tarmac.io/environment` label so the rule could bind the environment exactly*
+— the strongest-looking option and close to worthless: the label would be written by the same hand,
+in the same file, as the value it checks, so it catches a typo in one of the two and nothing else, in
+exchange for permanent required metadata on every workload. *A bare `^[a-z0-9-]+-config$` regex with
+no app binding* — accepts `other-local-config`, the cross-application mistake most worth catching.
+*Accepting any middle segment* — accepts `greeter-lcoal-config`; mirroring the enum costs one
+duplicated set and catches the whole typo class. *Skipping the check when the app label is absent* —
+above. *Generating the manifest's value from Terraform output* — the real fix, and much larger: it
+means a templating step between `terraform output` and `gitops/`, and `gitops/` is deliberately plain
+YAML that Argo CD reads with nothing in between.
+
+**Cost.** A string-shape assertion, not a proof: it does not know the bucket exists, is reachable, or
+holds the object — `/readyz` is still what finds that out. It does not bind the environment, so
+`greeter-production-config` would pass in the local deployment. It cannot see a value arriving
+through `envFrom` or `valueFrom`, which is asserted as a deliberate gap in a test rather than papered
+over by denying a legitimate pattern. And the convention still lives in two languages, because Rego
+cannot read HCL: this trades a manifest that can drift from the module for a rule that can, which is
+the better failure only because the rule is tested and the manifest was not. The tests name all three
+environments explicitly, so a fourth added to `variables.tf` breaks a test rather than a deploy. The
+fuller fix — a companion rule in `policy/terraform/` asserting the module's own local still matches
+the pattern — is not written.
+
+---
+
+### 52 — The naming expression is asserted from the Terraform side as well
+
+*Completes 51.*
+
+**Why.** 51's rule hard-codes `<app>-<environment>-config`, because Rego is handed parsed manifests
+and never HCL. A hard-coded copy with no link back to the original does not stop working when the
+original moves — it starts being confidently wrong, passing manifests that name a bucket Terraform no
+longer creates. That is a worse failure than the one it replaced.
+
+It is assertable, because conftest's parse of `main.tf` preserves the interpolation verbatim:
+`locals` comes back as a list of blocks and `bucket_name` as the literal string
+`"${var.app_name}-${var.environment}-config"`. So a rule in `policy/terraform/` can hold the module's
+own expression to the shape the Kubernetes rule assumes, from the side that can actually see it. It
+is matched as a pattern rather than by equality, so `${ var.app_name }` — legal HCL, and untouched by
+`terraform fmt`, which does not reformat inside interpolations — is not reported as a change.
+
+The message names `policy/kubernetes/config_bucket.rego` explicitly. That is the entire point of the
+rule: it fires at the moment somebody changes the convention, and it tells them where the other half
+is. A rule that just said "this does not match the expected pattern" would be a puzzle.
+
+**Rejected.** *Scoping to the module by file path* — not available; without `--combine`, conftest
+hands Rego one parsed document and nothing in it names the file. Scope had to be structural, and the
+rule fires only on a `bucket_name` local that an `aws_s3_bucket` in the same document takes its name
+from — which is better anyway, since a copy of this module in an application's own Terraform is
+caught and an unrelated `bucket_name` local is not. *Anchoring on every `aws_s3_bucket` name
+expression* — closes the rename dodge below, at the cost of holding every bucket in the estate to a
+shape only the config bucket owes. *Generating the Kubernetes rule from the Terraform* — a codegen
+step and a build artefact in git, to remove one line of duplication.
+
+**Cost.** Renaming the local takes it out of scope and the rule reports nothing — a false negative
+taken deliberately over a broad false positive, and stated in the rule itself. The environment enum
+is still mirrored by hand, in `variables.tf` and again in the Kubernetes rule, so a fourth
+environment is a two-file edit with only a failing test to prompt it. A name built inline or through
+`format()` is invisible. And the rule asserts only that the Terraform side has not moved — never that
+the Rego on the other side is right.
+
+---
+
+### 53 — The bucket-name rule is scoped by the module's signature, not by the local's name
+
+*Supersedes the false negative accepted in 52.*
+
+**Why.** 52 scoped the rule to a `bucket_name` local that an `aws_s3_bucket` takes its name from, and
+accepted the consequence in writing: rename the local, and the rule silently stops having an opinion.
+That is the worst shape a policy can take. It does not fail, it reports nothing, and nothing in the
+output distinguishes "checked and clean" from "not looking" — the same failure this file objects to
+everywhere else. The scope can be taken from the module's signature instead. Nothing else in the
+estate writes an `aws_s3_object` with `for_each = var.config` into a bucket, so the rule follows that
+bucket's own `${local.…}` reference to whichever local holds the name and holds *that* to the
+convention, whatever it has been called.
+
+**Rejected.** *Anchoring on every `aws_s3_bucket` name expression* — still rejected, for the reason 52
+gave: it holds every bucket in the estate to a shape only the config bucket owes. The signature is a
+third anchor 52 did not consider, and it is narrower than both of the two that were. *Leaving the false
+negative documented* — the comment was honest, and a reader who has to be told the rule can be
+switched off by a rename has been told the rule is optional.
+
+**Cost.** The scope is now a property of the module's internals rather than its naming, so a module
+that stops writing its config through `for_each = var.config` takes itself out of scope exactly as
+quietly as a rename used to. The dodge has moved rather than closed; it now costs a change to what the
+module does instead of what it calls things. Four tests pin the boundary, including a rename that
+diverges from the convention and a rename that does not.
+
+---
+
+### 54 — The environment enum is checked from the Terraform side
+
+*Closes a cost accepted in 52.*
+
+**Why.** The list of valid environments is written three times: the `contains([…], var.environment)`
+validation in `variables.tf`, and again in each of the two Rego rules that reason about the bucket
+name. 52 accepted that and left a failing test as the only prompt to keep them in step. A test only
+fails once somebody has already changed one copy and not the others, and only if they run it.
+`policy/terraform/environments.rego` reads the validation out of the parsed HCL and denies when it
+stops matching the list the Kubernetes rule mirrors, so a divergence is caught by the gate that
+already runs on every change rather than by a suite somebody remembers.
+
+A second rule denies a validation it cannot parse as a list. Without it, rewriting the validation into
+a form the rule does not understand would be indistinguishable from agreement, and silence would stop
+meaning "checked" — which is the property 53 was written to protect.
+
+**Rejected.** *Generating one list from the other* — a codegen step and a build artefact in git,
+rejected in 52 for the naming rule and no better here. *A shared data file both sides read* — Rego can
+read one and HCL cannot, so it moves the mirror rather than removing it and adds a third file to keep
+in step.
+
+**Cost.** The rule knows the validation's shape, not its meaning: a validation expressed through
+`can()` or a regex rather than `contains()` is unparseable, and reports as unparseable rather than
+being checked. An application's own `environment` variable, declared with no validation at all, is
+deliberately out of scope — the check covers the module, not every caller of it.
+
+---
+
+### 55 — The Kubernetes policy set is enforced by the platform's own pipeline
+
+**Why.** `POLICY_TARGETS` maps `infra/` to `policy/terraform/` and `gitops/` to `policy/kubernetes/`.
+An application repository has the first and never the second: there is no separate deployment
+repository, and an application's manifests are written into *this* repository's `gitops/<app>/` by the
+promoter, after the gates have passed. So over an application the Kubernetes rules load nothing. That
+is the deployment topology rather than a hole — `self.yml` gates this repository with
+`--only base-image,policy,infra` on every pull request and every push to the default branch, and
+`secrets.rego` fires there today, with a standing finding against `gitops/local-aws/credentials.yaml`.
+
+What was wrong was the reporting. A green Policy row read as though the whole of `policy/` had had an
+opinion, and only a reader with the target list memorised would notice that half the rules never
+loaded. Renaming `gitops/` would have silenced the Kubernetes set estate-wide with every pipeline
+staying green. The gate now names the sets that did not run — `infra/: 1 finding(s), reported not
+blocking (kubernetes rules not run: no gitops/)` — and a run with no targets at all is SKIPPED, not
+PASSED.
+
+**Rejected.** *Pointing the Kubernetes rules at a directory an application does not have* — it makes
+the gate skip silently everywhere and enforce nothing, which is the failure this entry exists to
+correct, applied to the whole estate instead of half of it. *Requiring every application to carry a
+`gitops/`* — a second copy of cluster state, in a repository the platform does not control.
+
+**Cost.** An application's manifest change is judged by the Kubernetes rules after the promotion
+commit lands on the default branch, not before it. What makes that survivable is that the pre-merge
+copy of those rules covers the manifests a human writes, and the promoter only ever rewrites an image
+digest the publish gate already resolved. Second cost: the scope note is prose in a gate summary, so a
+reader who does not read it still sees a green row.
+
+---
+
+### 56 — Image pinning follows `kubectl debug`; resource limits deliberately do not
+
+**Why.** Both admission policies matched `pods`, and a rule naming a parent resource never matches a
+subresource request. `kubectl debug` PATCHes `pods/ephemeralcontainers`, so it reached neither.
+`require-pinned-images` now matches that subresource on UPDATE — but matching alone would have been
+worse than not matching at all. Since 1.22 the subresource carries a whole Pod, so
+`has(object.spec.template)` is false and the policy's `containers` variable resolves to the pod's
+*original* containers, which were admitted at create time and are still compliant. Every debug
+container would have passed a rule that looked like coverage. The variable therefore folds in
+`ephemeralContainers`, behind a `has()` guard so that a plain Pod and a Deployment template — neither
+of which carries the field — do not fail on a missing key under `failurePolicy: Fail`.
+
+`require-resource-limits` does not match it, and cannot. Kubernetes refuses any request that sets
+`resources` on an ephemeral container, so a rule demanding requests and limits there is unsatisfiable
+by anybody: it would not police `kubectl debug`, it would ban it, with a message instructing the
+operator to set a field the API server will reject. The reasoning sits in the policy file at the point
+where the match would otherwise go, because its absence is the kind that reads as an oversight.
+
+**Rejected.** *`pods/*`* — one rule covering every subresource at once, and it pulls in exec, log,
+status and binding, whose request objects this CEL cannot read; under `failurePolicy: Fail` each
+becomes a rejection by evaluation error. *Matching the subresource in `require-resource-limits` and
+reading `containers` only* — it re-judges what was already judged at create time, and shows up as
+coverage.
+
+**Cost.** An ephemeral container consumes capacity that nothing accounts for, and nothing at admission
+can change that. `kubectl debug` stays the one path by which a workload exceeds its resource budget
+without a policy having an opinion — accepted because the alternative is removing the ability to debug
+a running pod.
+
+---
+
+### 57 — The admission policies are tested by evaluating their CEL, without a cluster
+
+**Why.** `policy/admission/` had no tests. `conftest verify` speaks Rego and never loaded it, so the
+only thing that had ever exercised the CEL was the live refusal probe at install time (48) — which
+proves each policy rejects one crafted object, once, and says nothing about the cases nobody thought to
+install. The rules that need testing are the ones never shown to reject anything.
+
+`admission.test.ts` reads the real YAML through `Bun.YAML.parse` and evaluates the real expressions
+against crafted request objects, using a small interpreter for the CEL subset these two policies use.
+Two properties of that interpreter are load-bearing: it throws on anything it does not implement —
+unknown method, unknown global, undeclared name — and it reproduces CEL's rule that a missing field is
+an error rather than undefined. Together they mean a policy that grows unmodelled syntax fails loudly
+instead of passing vacuously, and four tests assert them of the interpreter itself. The match
+constraints are flattened into a set and asserted too, so 56's subresource coverage cannot be removed
+without a test naming it failing.
+
+**Rejected.** *A CEL evaluation dependency* — the language has implementations, and taking a runtime
+dependency to test two files whose expressions run to a few dozen tokens is a poor trade against
+writing the subset. *A kind cluster in the suite* — the honest test, and it moves the suite from
+milliseconds to minutes and makes it need Docker. *Golden-file assertions over the YAML* — they pin the
+text rather than the behaviour, and would have passed the vacuous ephemeral-containers match in 56
+without complaint.
+
+**Cost.** The interpreter is not the API server. It does not type-check, it does not apply the
+binding's namespace selector, and it is handed request objects rather than receiving them — so a policy
+can pass every test here and still behave differently in a cluster, most plausibly on a request shape
+nobody crafted. It is a second implementation of somebody else's semantics, and it will drift from
+them. Against that: three deliberate breaks were each caught by exactly the test aimed at them, which
+the install-time probe could not have done.
+
+---
+
 ## Accepted costs, collected
 
 Every cost accepted above, in one place.
@@ -1449,6 +1745,21 @@ Every cost accepted above, in one place.
 | 47 | A laptop is not held to the version pin; that `fmt` and `validate` agree across minor versions is an assumption |
 | 48 | A policy added without a matching probe is silently unproven, and the install still reports success |
 | 48 | Each probe must satisfy every rule but its own, which gets harder with each policy added |
+| 49 | The bucket-naming convention is written in HCL and again as a YAML literal — enforced since 51 |
+| 50 | A fourth place the digest rule is written, and the only one with no runtime counterpart |
+| 50 | `ARG` resolution stops at one level, and only the repository-root Dockerfile is read |
+| 51 | A string-shape assertion, not a proof — it does not know the bucket exists or holds the object |
+| 51 | The environment segment is not bound, so a production bucket name passes in the local deployment |
+| 51 | The convention is mirrored in Rego, so a change to the module can leave the rule confidently wrong — caught since 52 |
+| 52 | Renaming the `bucket_name` local takes the rule out of scope and it reports nothing — closed since 53 |
+| 52 | The environment enum is still mirrored by hand, in `variables.tf` and again in the Rego — caught since 54 |
+| 53 | A module that stops writing its config through `for_each = var.config` leaves scope as quietly as a rename once did |
+| 54 | A validation expressed through `can()` or a regex is unparseable, and reports as that rather than being checked |
+| 54 | An application's own `environment` variable, declared without a validation, is out of scope |
+| 55 | An application's manifest change is judged by the Kubernetes rules after the promotion commit lands, not before it |
+| 55 | The scope note is prose in a gate summary — a reader who skips it still sees a green row |
+| 56 | An ephemeral container consumes capacity nothing accounts for, and nothing at admission can change that |
+| 57 | The CEL interpreter is a second implementation of somebody else's semantics — no type checking, no namespace selector, and it will drift |
 
 ## Rejected tools, collected
 
@@ -1478,5 +1789,14 @@ it found, blocking on CRITICAL while reporting HIGH, a second image-level secret
 Docker Scout, `hashicorp/setup-terraform`, OpenTofu, two lines of workflow YAML instead of a gate,
 separate gates for `fmt` and `validate`, `make infra-fmt` as the CI entry point, a randomised
 `TF_DATA_DIR`, a fixed sleep after applying the admission policies, polling a policy's status to
-decide it is enforcing, a single admission probe breaking every rule at once.
+decide it is enforcing, a single admission probe breaking every rule at once, an app-side lookup of
+the config bucket name, deploy-time injection of that name, hadolint, a third `POLICY_TARGETS` row
+for the Dockerfile policy set, a `tarmac.io/environment` label added so a policy could check itself,
+a bucket-name regex with no application binding, generating the manifest's bucket name from Terraform
+output, a policy rule anchored on every `aws_s3_bucket` name expression, generating the Kubernetes
+rule from the Terraform, generating one environment list from the other, a shared data file both the
+HCL and the Rego read, pointing the Kubernetes rules at a directory an application does not have,
+requiring every application to carry a `gitops/`, `pods/*` as an admission match, matching the
+ephemeral-containers subresource in the resource-limits policy, a CEL evaluation dependency, a kind
+cluster in the test suite, golden-file assertions over the policy YAML.
 Reasons are in the entries above.

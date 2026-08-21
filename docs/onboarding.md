@@ -1,8 +1,9 @@
 # Onboarding an application
 
-Everything here is one-time setup. Once it is done, an application's CI is the six lines in
-[Riding the road](../README.md#riding-the-road) and nothing else — no per-application
-configuration, no copied YAML.
+Everything here is one-time setup. Once it is done, an application's CI is sixteen lines — the
+call in [Riding the road](../README.md#riding-the-road), plus the `name`, `on`, `permissions`
+and `secrets` blocks every workflow needs — and nothing else: no per-application configuration,
+no copied YAML.
 
 Two of these steps are clicks in a web UI rather than Terraform. That is not an oversight, and
 each one says below why it cannot be automated.
@@ -57,6 +58,13 @@ caller.
 ### 2. Add the caller workflow
 
 ```yaml
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
 permissions:
   contents: read
   packages: write

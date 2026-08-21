@@ -18,8 +18,9 @@ laptop with no cloud account.
 | Bun | runs the gates | `brew install bun` |
 | kind | the Kubernetes cluster | `brew install kind` |
 | kubectl | talks to it | `brew install kubectl` |
+| curl | fetches the checksum-pinned ingress and Argo CD manifests during `make up` | preinstalled on macOS and most Linux distributions |
 | Terraform | provisions the applications' cloud dependencies, 1.11 or newer | `brew install terraform` |
-| conftest | runs the policies in `policy/`, as the pipeline's first gate | `brew install conftest` |
+| conftest | runs the policies in `policy/`, as the pipeline's first two gates | `brew install conftest` |
 | trivy | scans the built image, as the pipeline's one reporting gate | `brew install trivy` |
 
 Argo CD is not on this list on purpose: `make up` installs it into the
@@ -39,6 +40,7 @@ make ci         # run the gates against ../greeter
 make infra      # re-provision after changing the Terraform
 make infra-plan # what provisioning would change, without changing it
 make down       # tear it back down
+make down-purge # tear it down and discard the stand-in's data
 ```
 
 `make` on its own lists the available targets. `ENV=<name>` selects an environment for the
@@ -49,8 +51,7 @@ an absent one is a no-op, and a second `make infra` reports no changes.
 
 `make down` keeps the local AWS stand-in's data volume, so Terraform state survives a teardown —
 which is why a second `make up` reports no infrastructure changes rather than reprovisioning.
-`scripts/localstack-down.sh --purge` discards it, and only then does the next `up` genuinely start
-from nothing.
+`make down-purge` discards it, and only then does the next `up` genuinely start from nothing.
 
 ### What a good `make up` looks like
 
@@ -98,6 +99,19 @@ Two warnings scroll past on a first bring-up and both are expected. `aws-endpoin
 it. And `kubectl` objects to Argo CD's own finalizer name not being domain-qualified, which is
 upstream Argo's spelling and not ours to change.
 
+The one line above that goes stale on its own is `endpoint`. The stand-in's address on the cluster
+network is handed out by Docker and is not kept across a container restart, so restarting the
+emulator — or `make down` and `up` on the containers alone — leaves the cluster pointing at an
+address that answers nothing. `make status` names it as `STALE` or `missing` rather than leaving
+it to be read as an application fault, and this is the fix that follows:
+
+```
+make aws-endpoint   # re-point the cluster at the stand-in's current address
+```
+
+`make up` runs it as its last step, so a full bring-up never needs it. It is the repair for the
+half-restart, and it is safe to run at any time.
+
 ## Riding the road
 
 An application repository's entire CI is a call to the platform's reusable workflow:
@@ -143,13 +157,14 @@ flowchart TB
 
   subgraph ci["tarmac @v1 — the versioned platform"]
     direction TB
+    g0["Base image — the Dockerfile's FROM must carry a digest"]
     g1["Policy — conftest over the Terraform and the manifests"]
     g2["Dependencies · Types · Unit tests"]
     g3["Infrastructure — terraform fmt -check, then validate"]
     g4["Image build"]
     g5["Security — trivy · reporting, never blocks"]
     g6["Image publish — ghcr.io, digest resolved from the push"]
-    g1 --> g2 --> g3 --> g4 --> g5 --> g6
+    g0 --> g1 --> g2 --> g3 --> g4 --> g5 --> g6
     release["release — default branch only<br/>GitHub App token · one hour · this repo"]
     g6 -->|the digest, as a job output| release
   end
@@ -202,8 +217,8 @@ The same entrypoint runs on a laptop and in CI — `make ci` and the workflow bo
 the pull request means.
 
 Gates are either **blocking** or **reporting**. A blocking failure fails the required check;
-a reporting failure is surfaced on the pull request and never stops it, so ignoring one is a
-decision somebody made rather than one nobody saw. The current classification, and the
+a reporting failure is written to the run's GitHub step summary and never stops it, so ignoring
+one is a decision somebody made rather than one nobody saw. The current classification, and the
 reasoning behind each, is in [docs/gate-matrix.md](docs/gate-matrix.md) — generated from the
 registry by `make gate-matrix`, and checked in CI so it cannot drift from the code.
 
@@ -224,7 +239,7 @@ The same rules are enforced twice, in two places that see different things.
 
 | Where | What it is | Sees | Cannot see |
 |---|---|---|---|
-| `policy/kubernetes/`, `policy/terraform/` | Rego, run by conftest as the first gate | a change before it merges | anything applied by hand |
+| `policy/dockerfile/`, `policy/kubernetes/`, `policy/terraform/` | Rego, run by conftest as the first two gates | a change before it merges | anything applied by hand |
 | `policy/admission/` | ValidatingAdmissionPolicies the API server evaluates | every request the cluster receives | anything, until somebody is already deploying it |
 
 Neither makes the other redundant, and keeping the two in step is a real cost paid on purpose.
@@ -232,6 +247,12 @@ A pre-merge check is the only one that can be cheap — the fix is a review comm
 failed deploy — and an admission check is the only one that is not optional. Today both halves
 say the same two things: images come from `ghcr.io` and are pinned by digest, and every
 container declares CPU and memory requests and limits.
+
+`policy/dockerfile/` is the exception that has no admission counterpart, and cannot have one.
+The digest rule above judges the image the pipeline publishes, which is pinned by construction
+— it is the digest the publish gate resolved. What that image was *built on* is a `FROM` line
+in a Dockerfile, and no Kubernetes object records it. So the rule is stated a third time,
+against the file, where it is the only place it can be stated at all.
 
 The Rego half checks more than admission can, because a file is a richer thing to look at than
 an API request: S3 buckets that lack encryption, versioning or a public-access block, providers
@@ -245,9 +266,14 @@ Findings are **blocking** or **reporting**, the same split the gates use, expres
 on this repository today, and that is deliberate — a policy set that is green on the day it is
 written has not been shown to do anything.
 
+Both halves are tested, and `make policy-test` runs both. The Rego is exercised by `conftest
+verify`. The admission policies are CEL in YAML, which conftest cannot read, so their tests
+evaluate the real expressions — read out of the real manifests — against crafted request
+objects, with no cluster involved. Those are bun tests, so `make test` runs them too.
+
 ```
-make policy         # run the policy gate against APP_DIR
-make policy-test    # the policies' own unit tests — 59 of them
+make policy         # run the policy and base-image gates against APP_DIR
+make policy-test    # the policies' own unit tests — 150 of them
 make admission      # install or re-apply the cluster's policies
 ```
 
