@@ -7,6 +7,9 @@ tested set of quality gates, policy enforcement in CI and again at cluster admis
 infrastructure-as-code for their dependencies, and GitOps delivery — by calling a versioned
 workflow, not by copying YAML.
 
+[greeter](https://github.com/KrisF-Midnight/greeter) is a sample application that rides this
+road; the commands below provision and gate it.
+
 A local environment stands in for the cloud, so the whole road can be run end to end on a
 laptop with no cloud account.
 

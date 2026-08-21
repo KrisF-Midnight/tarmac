@@ -165,9 +165,7 @@ already fork and comment, and write access is a downgrade rather than a control.
 **Cost.** Everything is permanently visible, which is why secret scanning is a gate rather than a
 nice-to-have. **CODEOWNERS has no enforcement teeth here** — with a single maintainer, required
 reviews would block every pull request, so they stay off and CODEOWNERS states intent rather than
-enforcing it. Said plainly in the omissions list rather than left to be found. Forked PRs get a
-read-only token, so the verdict comment can't post on them; `pull_request_target` would fix it and
-is a known footgun.
+enforcing it. Said plainly in the omissions list rather than left to be found.
 
 ### 7 — GHCR, not a local registry
 
@@ -1197,9 +1195,9 @@ block* — then the platform ships with a policy set that is green on the day it
 demonstrates nothing.
 
 **Cost.** A `warn` that nobody reads is the same as no rule. It is printed in the gate output and
-in the pull request comment and there is nothing beyond that — no expiry, no ticket, no count that
-has to go down. Two known findings ship in a green pipeline, and the mechanism that stops them
-being ignored forever is a person.
+written to the run's GitHub step summary, and there is nothing beyond that — no expiry, no ticket,
+no count that has to go down. Two known findings ship in a green pipeline, and the mechanism that
+stops them being ignored forever is a person.
 
 ### 45 — GitOps is the intended path into the cluster, not the only one
 
@@ -1244,7 +1242,7 @@ scanner enforces nothing while still looking like a control, which is worse than
 because it is the same absence with a green tick on it.
 
 What makes that defensible rather than merely convenient is that reporting is not silence. The
-findings land in the pull request comment and the terminal, worst severity first and, within a
+findings land in the run's GitHub step summary and the terminal, worst severity first and, within a
 severity, the ones with a published fix ahead of the ones without — so what the author sees first
 is what they can act on today. Skipping one becomes a decision somebody made rather than one nobody
 saw. And the security properties a *change* can actually break — credentials written into a

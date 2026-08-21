@@ -1,0 +1,13 @@
+# Who owns what. With a single maintainer there is only one answer, so this
+# file is one line rather than a per-directory table that would repeat the
+# same name nine times and imply a division of ownership that does not exist.
+#
+# It records intent; it does not enforce. Required reviews are off — with one
+# maintainer they would block every pull request — so nothing here stops a
+# merge. See docs/decisions.md entry 6 and docs/omissions.md.
+#
+# The split to make when a second maintainer arrives is gates/, promote/ and
+# policy/ to whoever owns the pipeline contract, infra/ and gitops/ to whoever
+# owns what runs.
+
+* @KrisF-Midnight
