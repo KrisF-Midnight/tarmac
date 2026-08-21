@@ -1,6 +1,6 @@
 # Design Decisions
 
-Fifty-seven decisions, why each was made, what was rejected, and what it costs.
+Fifty-eight decisions, why each was made, what was rejected, and what it costs.
 
 A decision that stops being true gets a new entry marking the old one superseded — the wrong turn
 stays in the record.
@@ -64,6 +64,7 @@ stays in the record.
 | [55](#55--the-kubernetes-policy-set-is-enforced-by-the-platforms-own-pipeline) | The Kubernetes policy set is enforced by the platform's own pipeline |
 | [56](#56--image-pinning-follows-kubectl-debug-resource-limits-deliberately-do-not) | Image pinning follows `kubectl debug`; resource limits deliberately do not |
 | [57](#57--the-admission-policies-are-tested-by-evaluating-their-cel-without-a-cluster) | The admission policies are tested by evaluating their CEL, without a cluster |
+| [58](#58--the-promoters-write-guard-names-the-event-not-just-the-runner) | The promoter's write guard names the event, not just the runner |
 
 ---
 
@@ -1688,19 +1689,52 @@ the install-time probe could not have done.
 
 ---
 
+### 58 — The promoter's write guard names the event, not just the runner
+
+**Why.** The promoter defaults to a dry run and has to be talked into writing. The condition that
+does the talking used to be `GITHUB_ACTIONS === "true"`, which answers *am I on a runner* — and every
+job in every workflow sets it. A pull_request run, a scheduled run, or some future job that calls the
+promoter to preview a diff would all have satisfied it. What actually authorises a push is *am I the
+release job of a merged change*, and until now the difference was held entirely by an `if:` in
+`ci.yml`: outside the program, untestable, and invisible to anyone reading the promoter's own source.
+Adding `GITHUB_EVENT_NAME === "push"` moves the derivable half of that condition into the code, costs
+nothing — the release job already runs only on `push` — and turns a promoter invoked from a
+pull_request job into a dry run rather than a deploy. It is decision 36's boundary restated one layer
+down: the code should refuse, not merely never be asked.
+
+**Rejected.** *Leave it to `ci.yml`* — the guard already worked in practice, and it worked because of
+a file the promoter cannot see; a second caller is a rewrite of the security property with no test to
+notice. *Require the branch too* — the strictest version, and the default branch's name lives in the
+workflow context rather than the environment, so the program would have to be told what it is, which
+is the caller asserting its own authority. *An explicit `--i-mean-it` flag* — unambiguous, and it puts
+the decision to write in the hands of whoever composes the command line.
+
+**Cost.** The guard is now a pair split across two files, and only one half is tested here. A push to
+a side branch still satisfies the program; `ci.yml`'s `if:` is what stops it, so the two must move
+together, and the comment above `writesAllowed` says so because nothing enforces it.
+
+---
+
 ## Accepted costs, collected
 
 Every cost accepted above, in one place.
 
 | From | What we accepted |
 |---|---|
+| 1 | kind is the largest single consumer of the memory a laptop can spare, which is why observability is deferred rather than shipped |
+| 2 | The pipeline visibly stops short of deploying, and reconciliation is poll-based because no webhook can reach a laptop |
+| 4 | More upfront work than YAML, and Bun becomes a hard CI dependency |
+| 5 | Cross-repo coordination, and a reusable workflow that must check out the platform repo itself or silently run against absent policies |
 | 6 | CODEOWNERS has no enforcement teeth — a single account can't approve its own PR |
+| 7 | `make up` needs internet, and every published image is public and permanent |
 | 8 | LocalStack doesn't enforce IAM, so no least-privilege guardrail is honestly demonstrable |
+| 9 | A GitHub App must be created, installed on both repos and its key stored — the only real credential in the design |
 | 13 | A frozen, single-maintainer third-party image in the stack — pinned by digest, unpatched if a CVE lands |
 | 14 | No merge-time deployment apply, no promotion path, no infra drift detection — nowhere to promote to |
 | 10 | Deploy verification never reaches the PR; the evidence chain breaks at the last link |
 | 10 | A known open Argo bug can make the smoke test pass against the previous version |
 | 11 | Two policy languages, because one tool would be worse at one of the two jobs |
+| 12 | No model in the merge path, so the change that passes every rule and is still wrong is caught by review rather than by a gate |
 | 3 | Argo's UI rollback isn't available with automated sync; `git revert` is the only path |
 | 15 | A younger bundler with a thin plugin ecosystem, and DOM-test globals that collide with the server's |
 | 16 | No graceful degradation — an app that can't meet the three conventions can't ride the road at all |
@@ -1760,6 +1794,7 @@ Every cost accepted above, in one place.
 | 55 | The scope note is prose in a gate summary — a reader who skips it still sees a green row |
 | 56 | An ephemeral container consumes capacity nothing accounts for, and nothing at admission can change that |
 | 57 | The CEL interpreter is a second implementation of somebody else's semantics — no type checking, no namespace selector, and it will drift |
+| 58 | The write guard is a pair split across two files, only one half of it tested, and a push to a side branch still satisfies the tested half |
 
 ## Rejected tools, collected
 
