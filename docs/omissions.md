@@ -124,3 +124,23 @@ decision is the failure mode this document exists to avoid. Each is referenced f
 | CODEOWNERS states intent, it does not enforce | With a single maintainer, required reviews would block every pull request, so they are off. The file records who owns what; it does not stop anyone. |
 | No secret scanning of image layers | The Rego catches secrets in source, which is where this platform's would come from. A credential baked into a layer of a built image is not caught by anything here. |
 | Still on ingress-nginx, not the Gateway API | The Gateway API is where this is going; the migration is real work and has not been done. The current controller is a deliberate choice for today, not a claim about tomorrow. |
+
+## Sharp edges that are known and not fixed
+
+The section above is things that were never built. These are different: they are defects, found,
+understood, and left in. Both are reachable only by running two checkouts of this repository at the
+same time, which nothing here suggests doing and which `make up` does not warn about. Fixing them
+would mean parameterising files that cannot be parameterised — a kind config supports no variable
+interpolation at all, and `container_name` ignores `COMPOSE_PROJECT_NAME` — so the work is real and
+the payoff is a scenario one person on one laptop does not have. Writing them down costs nothing
+and is worth more than a silence that reads like nobody looked.
+
+| Sharp edge | What happens |
+|---|---|
+| A second checkout's `make up` restarts the first one's AWS stand-in | Compose bakes the absolute path of the `./init` bind mount into the service's config hash, so the same committed file hashes differently from a different directory. `docker compose up -d` reads that as a changed service and recreates the container. The named volume survives and is reattached, so nothing is lost, but the stand-in rejoins the cluster network on a new address while the `aws` Service's EndpointSlice still holds the old one. In-cluster AWS calls fail until `make aws-endpoint` runs again. |
+| Two names for one cluster | `CLUSTER_NAME` drives the existence check, the kubectl context and `kind delete`; the name kind actually creates comes from `kind/cluster.yaml` and honours only `KIND_CLUSTER_NAME`. Setting one without the other makes the existence check miss and `kind create cluster` then fail on a name that is already taken. Non-destructive, but a second checkout left at the default reuses the first checkout's cluster while appearing to build its own. |
+
+Both were found by rebuilding the whole platform from a purged volume and a fresh clone, which is
+also what caught a cold-start failure that every other check had missed. That exercise is the one
+piece of verification here that cannot be replaced by a test, because what it tests is whether the
+committed repository is sufficient — and nothing running inside that repository can answer it.
