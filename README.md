@@ -142,7 +142,8 @@ the road, it stops being paved.
 Before an application can make that call, the deployment identity has to exist and its
 credentials have to be in the application repository. That is one-time setup, and it is
 written down in [docs/onboarding.md](docs/onboarding.md) — including the two steps that are
-web-UI clicks rather than code, and why neither can be automated.
+web-UI clicks rather than code, registering the App and making the package public, and why
+neither can be automated.
 
 ## How a commit becomes a running service
 

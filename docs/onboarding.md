@@ -5,8 +5,10 @@ call in [Riding the road](../README.md#riding-the-road), plus the `name`, `on`, 
 and `secrets` blocks every workflow needs — and nothing else: no per-application configuration,
 no copied YAML.
 
-Two of these steps are clicks in a web UI rather than Terraform. That is not an oversight, and
-each one says below why it cannot be automated.
+Two of these steps — registering the GitHub App, and making the published package public — are
+clicks in a web UI rather than Terraform. That is not an oversight, and each one says below why
+it cannot be automated. Storing the secrets is written here as clicks too, but only for brevity:
+that one can be scripted, and the commands are given.
 
 ## Once per organisation: the deployment identity
 
@@ -36,6 +38,12 @@ cluster.
 Then generate a private key (**Generate a private key**, which downloads a `.pem`) and note
 the numeric **App ID**.
 
+None of that can be scripted. There is no REST endpoint that registers a GitHub App — the App
+Manifest flow gets closest, and it still redirects a person to GitHub to click **Create GitHub
+App** before it will issue the code that returns the credentials. Installing is the same story:
+the API can list, suspend and delete installations, and add a repository to one that already
+exists, but it cannot create the first one.
+
 ## Once per application repository
 
 ### 1. Store the App credentials as secrets
@@ -49,6 +57,11 @@ In the application repository, under *Settings → Secrets and variables → Act
 
 The workflow exchanges these for a token scoped to `tarmac` that expires in an hour. The
 long-lived credential is the private key; what CI actually holds is short-lived.
+
+Unlike the two web-UI steps, this one can be automated: `gh secret set PLATFORM_APP_ID` and
+`gh secret set PLATFORM_APP_PRIVATE_KEY < key.pem` write the same two secrets from a terminal.
+The clicks are given here because onboarding a repository is a once-only job, not because the
+API is missing.
 
 Pass them to the platform by name, never with `secrets: inherit`. Inheriting hands the called
 workflow every secret the repository holds — including ones added later, for unrelated
