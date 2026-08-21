@@ -6,11 +6,10 @@ import { UsageError } from "../../gates/src/args";
  * The important default is `dryRun`. This command edits a file and pushes a
  * commit, and it is in the same repository as `make ci`, which anyone may run
  * on a laptop at any time. So the safe mode is the default and the dangerous
- * one has to be arrived at deliberately: writing requires being inside GitHub
- * Actions, and `--dry-run` can still override that. There is no flag that turns
- * writing on from a laptop, which is the point — the separation between "verify"
- * and "mutate" is only real if it cannot be undone by a flag someone copies out
- * of a runbook.
+ * one has to be arrived at deliberately, and `--dry-run` can still override
+ * that. There is no flag that turns writing on from a laptop, which is the
+ * point — the separation between "verify" and "mutate" is only real if it
+ * cannot be undone by a flag someone copies out of a runbook.
  */
 
 export type Options = {
@@ -42,9 +41,37 @@ export const USAGE = `usage: promote [options]
   --remote <name>     remote to push to (default: origin)
   --dry-run           print the change and stop
 
-Writes only inside GitHub Actions. Anywhere else it is a dry run whether or
-not --dry-run was given.
+Writes only from a push build inside GitHub Actions. Anywhere else it is a dry
+run whether or not --dry-run was given.
 `;
+
+/**
+ * The one condition under which this program is allowed to change anything.
+ *
+ * `GITHUB_ACTIONS === "true"` on its own was the convenient signal rather than
+ * the right one, and the gap is visible from the two directions the check has
+ * to hold in.
+ *
+ * From a laptop it is sound: the variable is absent, so the run is a dry run,
+ * and that is preserved below. From inside CI it was too generous. Every job in
+ * every workflow sets `GITHUB_ACTIONS=true` — a pull_request run, a scheduled
+ * run, some future job that calls the promoter to preview a diff — so the
+ * variable answers "am I on a runner", when what authorises a push is "am I the
+ * release job of a merged change". Today ci.yml enforces that in a YAML `if:`,
+ * outside this program, where it cannot be tested and cannot be relied on by
+ * anything reading only this file. `GITHUB_EVENT_NAME` moves the derivable half
+ * of it in here, costs nothing — ci.yml's release job already runs only on
+ * `push` — and makes a promoter invoked from a pull_request job a dry run
+ * rather than a deploy.
+ *
+ * The half that stays outside is the branch. The default branch's name is in
+ * the workflow context and not in the environment, so a push to a side branch
+ * still satisfies this; ci.yml's `if:` is what actually stops that, and it is
+ * named here so the next reader knows the pair is load-bearing.
+ */
+function writesAllowed(env: Record<string, string | undefined>): boolean {
+  return env.GITHUB_ACTIONS === "true" && env.GITHUB_EVENT_NAME === "push";
+}
 
 function valueAfter(argv: string[], i: number, flag: string): string {
   const value = argv[i + 1];
@@ -61,7 +88,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
     repoDir: ".",
     branch: "main",
     remote: "origin",
-    dryRun: env.GITHUB_ACTIONS !== "true",
+    dryRun: !writesAllowed(env),
   };
 
   for (let i = 0; i < argv.length; i++) {

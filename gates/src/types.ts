@@ -68,7 +68,7 @@ export type GateContext = {
 
 export type GateOutcome = {
   status: Status;
-  /** One line, shown in the terminal and in the PR comment's table. */
+  /** One line, shown in the terminal and in the step summary's table. */
   summary: string;
   /** Optional long form — command output, kept out of the summary line. */
   details?: string;
@@ -76,7 +76,7 @@ export type GateOutcome = {
    * Machine-readable findings, for the steps that run after the gates.
    *
    * Deliberately separate from `summary`: the summary is written for a human
-   * reading a PR comment, and the moment something parses it, its wording is a
+   * reading a step summary, and the moment something parses it, its wording is a
    * contract. A gate that discovers a fact worth acting on — the digest it just
    * pushed, say — states it here instead.
    */

@@ -17,6 +17,15 @@ import { exitCodeFor, verdictFrom } from "./verdict";
  */
 async function main(argv: string[]): Promise<number> {
   const options = parseArgs(argv, Bun.env);
+
+  // Asked for deliberately, so it is not an error: usage goes to stdout and the
+  // exit code is zero. The same string UsageError prints, so the two cannot
+  // drift apart.
+  if (options.help) {
+    console.log(USAGE);
+    return 0;
+  }
+
   const gates = selectGates(options.only);
 
   const runs = await runGates(gates, {

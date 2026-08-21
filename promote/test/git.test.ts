@@ -135,8 +135,8 @@ describe("commitMessage", () => {
     expect(subject.length).toBeLessThan(52);
   });
 
-  // The question anyone reading the deployment repo's history has is "what
-  // caused this", and the answer is in another repository.
+  // The question anyone reading the gitops/ history has is "what caused
+  // this", and the answer is in the application's repository.
   test("the body points back at the change and the run that made it", () => {
     const message = commitMessage({
       app: "greeter",

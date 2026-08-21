@@ -46,12 +46,19 @@ describe("the gate registry", () => {
   test("cheap gates run before expensive ones", () => {
     const order = GATES.map((g) => g.id);
 
-    // Policy first: no install, no network, no Docker.
-    expect(order.indexOf("policy")).toBe(0);
+    // The two static-policy gates first: no install, no network, no Docker.
+    // Base image ahead of policy because it parses one file where policy walks
+    // two directory trees.
+    expect(order.indexOf("base-image")).toBe(0);
+    expect(order.indexOf("policy")).toBe(1);
     expect(order.indexOf("deps")).toBeLessThan(order.indexOf("typecheck"));
     expect(order.indexOf("typecheck")).toBeLessThan(order.indexOf("image-build"));
     expect(order.indexOf("unit-tests")).toBeLessThan(order.indexOf("image-build"));
     expect(order.indexOf("image-build")).toBeLessThan(order.indexOf("image-publish"));
+
+    // The base image is what the image is built ON. Learning it was unpinned
+    // after spending a minute building on it is a minute spent to learn nothing.
+    expect(order.indexOf("base-image")).toBeLessThan(order.indexOf("image-build"));
 
     // Scanning needs the artefact to exist, and a finding is worth more before
     // the image is on a public registry than after.
@@ -80,6 +87,96 @@ describe("selectGates", () => {
   // A typo must not produce a green run that gated nothing.
   test("an unknown id is an error, not an empty selection", () => {
     expect(() => selectGates(["typechek"])).toThrow(/unknown gate/);
+  });
+});
+
+describe("the base image gate", () => {
+  const baseImage = () => gateById("base-image")!;
+
+  test("checks the repository-root Dockerfile against the platform's own policy set", async () => {
+    const { exec, calls } = fakeExec();
+
+    const outcome = await baseImage().run(context(exec));
+
+    const command = calls.at(-1)!.join(" ");
+    expect(command).toContain("--policy /repos/tarmac/policy/dockerfile");
+    expect(command).toContain("/repos/greeter/Dockerfile");
+    expect(outcome.status).toBe("passed");
+  });
+
+  // conftest would infer the parser from the filename, but inference is a
+  // behaviour of somebody else's tool and this gate blocks merges. If it ever
+  // changed, the failure mode is a gate that parses the file as something else
+  // and finds nothing wrong with it.
+  test("names the dockerfile parser rather than relying on inference", async () => {
+    const { exec, calls } = fakeExec();
+
+    await baseImage().run(context(exec));
+
+    const command = calls.at(-1)!;
+    expect(command[command.indexOf("--parser") + 1]).toBe("dockerfile");
+  });
+
+  // Same rule as the policy gate, for the same reason: a repository that
+  // supplied the policy it is judged against could edit it to pass.
+  test("never reads the policy from the repository being gated", async () => {
+    const { exec, calls } = fakeExec();
+
+    await baseImage().run(context(exec));
+
+    for (const call of calls) {
+      const at = call.indexOf("--policy");
+      if (at === -1) continue;
+      expect(call[at + 1]!.startsWith("/repos/tarmac/")).toBe(true);
+    }
+  });
+
+  test("a mutable base fails the gate and keeps conftest's own words", async () => {
+    const { exec } = fakeExec({
+      "policy/dockerfile": {
+        code: 1,
+        stdout:
+          "FAIL - /repos/greeter/Dockerfile - main - stage \"runtime\" builds `FROM oven/bun:1.3.14-alpine`" +
+          " — base images must be pinned by digest, not by tag",
+      },
+    });
+
+    const outcome = await baseImage().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("Dockerfile");
+    expect(outcome.details).toContain("pinned by digest");
+  });
+
+  // The severity is the whole point of the gate: a mutable base image is
+  // exactly the thing this platform claims to prevent, so it stops the merge
+  // rather than appearing in a comment.
+  test("blocks rather than reports", () => {
+    expect(baseImage().severity).toBe("blocking");
+  });
+
+  // The platform gating itself is this case. A repository with no Dockerfile
+  // has no base image to pin, and image-build is the gate that has an opinion
+  // about a missing one.
+  test("a repository with no Dockerfile is skipped, not failed", async () => {
+    const { exec, calls } = fakeExec();
+
+    const outcome = await baseImage().run(context(exec, { exists: only("nothing") }));
+
+    expect(outcome.status).toBe("skipped");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a missing conftest fails the gate rather than skipping it", async () => {
+    const exec: Exec = async () => {
+      throw new Error("spawn conftest ENOENT");
+    };
+
+    const outcome = await baseImage().run(context(exec));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.summary).toContain("conftest");
+    expect(outcome.details).toContain("brew install conftest");
   });
 });
 
@@ -131,6 +228,52 @@ describe("the policy gate", () => {
     const outcome = await conftest().run(context(exec, { exists: only("nothing") }));
 
     expect(outcome.status).toBe("skipped");
+  });
+
+  /**
+   * The honesty property, and the one this gate is easiest to get wrong.
+   *
+   * An application repository has `infra/` and no `gitops/` — its manifests
+   * live in the platform's own `gitops/<app>/`, written there by `promote` —
+   * so the Kubernetes rules genuinely have nothing to judge in an app pipeline.
+   * That is the topology, not a bug. What would be a bug is a green Policy row
+   * that reads as though every rule in `policy/` had looked at the change: the
+   * reader would have to know the target list by heart to spot the absence, and
+   * a renamed `gitops/` would silence the Kubernetes set everywhere while every
+   * pipeline stayed green.
+   */
+  test("names the policy sets it did not run, not only the ones it did", async () => {
+    const { exec } = fakeExec();
+
+    const outcome = await conftest().run(context(exec, { exists: only("/infra") }));
+
+    expect(outcome.status).toBe("passed");
+    expect(outcome.summary).toContain("infra/");
+    expect(outcome.summary).toContain("kubernetes rules not run: no gitops/");
+  });
+
+  test("a warning does not crowd out the note about what was skipped", async () => {
+    const { exec } = fakeExec({
+      "policy/terraform": { stdout: "WARN - infra/main.tf - main - module is not pinned" },
+    });
+
+    const outcome = await conftest().run(context(exec, { exists: only("/infra") }));
+
+    expect(outcome.summary).toContain("1 finding");
+    expect(outcome.summary).toContain("kubernetes rules not run");
+  });
+
+  // The platform gating itself is the run that has both trees, and it is the
+  // only place `policy/kubernetes/` is enforced before the cluster sees a
+  // manifest. Nothing was skipped there, so nothing is claimed to have been.
+  test("a repository with both trees carries no such note", async () => {
+    const { exec } = fakeExec();
+
+    const outcome = await conftest().run(context(exec));
+
+    expect(outcome.status).toBe("passed");
+    expect(outcome.summary).toContain("gitops/");
+    expect(outcome.summary).not.toContain("not run");
   });
 
   test("a violation fails the gate and keeps conftest's own words", async () => {
@@ -670,6 +813,41 @@ describe("image-publish", () => {
 
     expect(outcome.status).toBe("failed");
     expect(outcome.summary).toContain("digest");
+    expect(outcome.facts).toBeUndefined();
+  });
+
+  // A daemon that knows this image under more than one name reports one entry
+  // per repository, in no documented order. Reading entry zero and pairing it
+  // with *our* repository name is how a reference to bytes nobody here
+  // published gets stated as a fact and committed into gitops/.
+  test("picks the digest for the repository it pushed to, whatever the order", async () => {
+    const ours = `sha256:${"d".repeat(64)}`;
+    const { exec } = fakeExec({
+      ...notYetPublished,
+      inspect: {
+        stdout: `registry.local/greeter@sha256:${"e".repeat(64)}\nghcr.io/owner/greeter@${ours}\n`,
+      },
+    });
+
+    const outcome = await gateById("image-publish")!.run(
+      context(exec, { event: "push", env: pushEnv }),
+    );
+
+    expect(outcome.summary).toBe(`ghcr.io/owner/greeter@${ours}`);
+    expect(outcome.facts).toEqual({ image: `ghcr.io/owner/greeter@${ours}` });
+  });
+
+  test("a digest for somebody else's repository is not ours to report", async () => {
+    const { exec } = fakeExec({
+      ...notYetPublished,
+      inspect: { stdout: `registry.local/greeter@sha256:${"e".repeat(64)}\n` },
+    });
+
+    const outcome = await gateById("image-publish")!.run(
+      context(exec, { event: "push", env: pushEnv }),
+    );
+
+    expect(outcome.status).toBe("failed");
     expect(outcome.facts).toBeUndefined();
   });
 

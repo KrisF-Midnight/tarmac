@@ -3,11 +3,12 @@
 # Gate matrix
 
 Every gate the platform runs, whether it blocks a merge, and why it has the severity it
-has. Blocking gates fail the required check. Reporting gates are surfaced on the pull
-request and never stop it.
+has. Blocking gates fail the required check. Reporting gates are written to the run's
+GitHub step summary and never stop it.
 
 | Gate | Severity | Why |
 |---|---|---|
+| Base image | blocking | The digest rule the manifests and the admission policy both enforce, applied to the one image neither of them can see: the Dockerfile's own base. A mutable `FROM` tag makes every digest downstream of it a precise pin on bytes nobody reviewed. |
 | Policy | blocking | The same rules the cluster enforces at admission, applied where they are still cheap to fix. A violation caught here is a review comment; caught at admission it is a failed deploy with the change already merged. |
 | Dependencies | blocking | A lockfile that disagrees with package.json means the build resolved something nobody reviewed. Installing frozen makes that a failure instead of a silent resolution. |
 | Types | blocking | A type error is a defect the compiler already found. Letting it through would mean the pipeline knowingly shipped a known bug, and the fix is always cheap. |
@@ -15,4 +16,4 @@ request and never stop it.
 | Infrastructure | blocking | The policy rules read the Terraform as text; only Terraform knows the provider schema. A misspelled argument or a dangling reference passes every other gate here and fails at apply, which is the last place where failing is still cheap. |
 | Image build | blocking | An app that does not build cannot deploy. Running it on every PR rather than only on merge means the Dockerfile is covered by review like everything else. |
 | Security | reporting | Known vulnerabilities arrive on a disclosure schedule, not in a diff — blocking on them turns an unrelated CVE into an outage in the fix pipeline, and teams answer that with a blanket ignore file. Reported instead, worst and most fixable first, so skipping one is a decision somebody made. |
-| Image publish | blocking | The digest committed to the deployment repo has to resolve on any machine. A push that silently failed would surface as an ImagePullBackOff much later, far from the cause. |
+| Image publish | blocking | The digest committed to this repository's own gitops/ tree has to resolve on any machine. A push that silently failed would surface as an ImagePullBackOff much later, far from the cause. |

@@ -5,8 +5,9 @@ import type { Verdict } from "./verdict";
  * Rendering, kept away from both the running and the deciding.
  *
  * There are three audiences and they want different things: a developer at a
- * terminal wants the failing output inline, a pull request wants one summary it
- * can skim, and the gate matrix wants the severities and the reasons for them.
+ * terminal wants the failing output inline, the run's GitHub step summary wants
+ * one table it can skim, and the gate matrix wants the severities and the
+ * reasons for them.
  * All three are derived from the same run, so they cannot disagree.
  */
 
@@ -73,7 +74,7 @@ export function renderTerminal(runs: GateRun[], verdict: Verdict, colour = true)
   return lines.join("\n");
 }
 
-/** One comment, not one per gate — the pull request stays readable. */
+/** One table, not one per gate — the step summary stays readable. */
 export function renderMarkdown(runs: GateRun[], verdict: Verdict): string {
   const heading = verdict.passed ? "All blocking gates passed" : "Blocking gates failed";
 
@@ -127,8 +128,8 @@ export function renderGateMatrix(gates: Gate[]): string {
     "# Gate matrix",
     "",
     "Every gate the platform runs, whether it blocks a merge, and why it has the severity it",
-    "has. Blocking gates fail the required check. Reporting gates are surfaced on the pull",
-    "request and never stop it.",
+    "has. Blocking gates fail the required check. Reporting gates are written to the run's",
+    "GitHub step summary and never stop it.",
     "",
     "| Gate | Severity | Why |",
     "|---|---|---|",

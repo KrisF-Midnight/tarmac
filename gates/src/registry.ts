@@ -2,7 +2,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { tail } from "./exec";
 import { IMAGE_FACT } from "./facts";
-import { type ImageName, digestFrom, imageNameFor } from "./image";
+import {
+  type ImageName,
+  digestForRepository,
+  imageNameFor,
+  repoDigestsIn,
+  repositoryOf,
+} from "./image";
 import type { Gate, GateContext, GateOutcome } from "./types";
 import {
   type Vulnerability,
@@ -41,6 +47,83 @@ async function runCommand(
 }
 
 /**
+ * The Dockerfile's own base image, checked for the one thing every other copy
+ * of the digest rule is blind to.
+ *
+ * The platform states "images are pinned by digest" twice — as Rego over
+ * Kubernetes manifests and as a ValidatingAdmissionPolicy at admission — and
+ * both of those read container images out of Kubernetes objects. The image they
+ * judge is the one this pipeline published, and that one is pinned by
+ * construction, because `promote` writes the digest the publish gate resolved.
+ * Neither has ever read a Dockerfile. So a `FROM` swapped from a digest to a
+ * mutable tag kept every gate green while making the pinned digest downstream a
+ * precise reference to bytes nobody reviewed. This is that hole.
+ *
+ * Its own gate rather than a third entry in POLICY_TARGETS, for two reasons.
+ * That list maps a directory to a policy set and this is a single file with a
+ * different parser; and the severity, the ordering and the rationale of a check
+ * are things this platform insists on stating per gate, in the matrix, where
+ * they can be read and argued with.
+ *
+ * One file at the repository root, and no search for others. That is not
+ * laziness about `build/Dockerfile`: the image-build gate runs `docker build .`
+ * against exactly this path, so this is the only Dockerfile that becomes
+ * anything. A gate that scanned files nothing builds would be enforcing a rule
+ * on dead code, and would eventually be silenced for it.
+ */
+const DOCKERFILE = "Dockerfile";
+
+const baseImage: Gate = {
+  id: "base-image",
+  title: "Base image",
+  severity: "blocking",
+  rationale:
+    "The digest rule the manifests and the admission policy both enforce, applied to the one " +
+    "image neither of them can see: the Dockerfile's own base. A mutable `FROM` tag makes every " +
+    "digest downstream of it a precise pin on bytes nobody reviewed.",
+  run: async (ctx) => {
+    const dockerfile = join(ctx.appDir, DOCKERFILE);
+
+    // Skipped, not failed. A repository with no Dockerfile has no base image to
+    // pin — the platform gating itself is exactly that case — and the gate that
+    // has an opinion about a missing Dockerfile is image-build, further down.
+    if (!(await ctx.exists(dockerfile))) {
+      return { status: "skipped", summary: `nothing to check: no ${DOCKERFILE}` };
+    }
+
+    if (!(await conftestAvailable(ctx))) return conftestMissing("base image");
+
+    // `--parser` explicitly, though conftest would infer it from the filename.
+    // Inference is a behaviour of somebody else's tool, and this gate blocks
+    // merges; if that inference ever changed, the failure mode would be a gate
+    // that parses a Dockerfile as something else and finds nothing in it.
+    const { code, stdout, stderr } = await ctx.exec(
+      [
+        "conftest",
+        "test",
+        "--no-color",
+        "--parser",
+        "dockerfile",
+        "--policy",
+        join(ctx.platformDir, "policy", "dockerfile"),
+        dockerfile,
+      ],
+      { cwd: ctx.appDir },
+    );
+
+    if (code !== 0) {
+      return {
+        status: "failed",
+        summary: `unpinned base image in ${DOCKERFILE}`,
+        details: tail(`${stdout}\n${stderr}`.trim()),
+      };
+    }
+
+    return { status: "passed", summary: `${DOCKERFILE} base images pinned by digest` };
+  },
+};
+
+/**
  * Policy, checked against the files rather than against the cluster.
  *
  * The rules live in `policy/` in this repository and are enforced twice, on
@@ -52,10 +135,22 @@ async function runCommand(
  * `kubectl apply`. Keeping them in step is a real cost, paid deliberately, and
  * the policy unit tests are what stop them drifting silently.
  *
- * Note which directory each policy set finds here. An application repository
- * has `infra/` and so is judged by the Terraform rules; the Kubernetes rules
- * fire when the platform gates *itself*, because that is where the manifests
- * live. That asymmetry is the deployment topology, not an oversight.
+ * Note which directory each policy set finds here, because only one of them is
+ * reachable from a given repository and that is the whole design rather than a
+ * gap in it. An application repository has `infra/` and is judged by the
+ * Terraform rules. It has no `gitops/` and never will: there is no separate
+ * deployment repository, so an app's manifests live in *this* repository's
+ * `gitops/<app>/`, written there by `promote` after the gates have passed. The
+ * Kubernetes rules therefore fire when the platform gates itself — that is
+ * `.github/workflows/self.yml`, which runs `--only base-image,policy,infra`
+ * with `--app-dir .` on every pull request and every push to the default
+ * branch, and it is the only place `policy/kubernetes/` is enforced before the
+ * cluster sees a manifest. `secrets.rego` in particular is reached there and
+ * nowhere else, and it has a standing finding to show for it.
+ *
+ * What that asymmetry costs is stated in `scopeNote` below: a run that judges
+ * one of these trees must say which sets it did not run, or a green Policy row
+ * reads as though every rule in `policy/` had an opinion about the change.
  *
  * Blocking, and the tool being missing is a failure rather than a skip. A gate
  * that quietly does nothing when its tool is absent produces a green run that
@@ -65,6 +160,8 @@ const POLICY_TARGETS = [
   { dir: "infra", policies: "terraform" },
   { dir: "gitops", policies: "kubernetes" },
 ] as const;
+
+type PolicyTarget = (typeof POLICY_TARGETS)[number];
 
 /**
  * `.terraform` holds provider binaries and a copy of state, and `node_modules`
@@ -84,6 +181,18 @@ async function conftestAvailable(ctx: GateContext): Promise<boolean> {
   }
 }
 
+/** Shared by the two gates that shell out to conftest, so they cannot drift. */
+function conftestMissing(gate: string): GateOutcome {
+  return {
+    status: "failed",
+    summary: "conftest is not installed",
+    details:
+      `The ${gate} gate needs conftest on PATH: \`brew install conftest\`, or see ` +
+      "https://www.conftest.dev/install/. It fails rather than skips because a gate " +
+      "that skips when its tool is missing reports success for work it did not do.",
+  };
+}
+
 /**
  * Warnings, counted off the output.
  *
@@ -96,6 +205,28 @@ function warningsIn(stdout: string): string[] {
   return stdout.split("\n").filter((line) => line.startsWith("WARN"));
 }
 
+/**
+ * The policy sets that had nothing to judge, named in the summary of the run
+ * that did not run them.
+ *
+ * Without this the gate is accurate and still misleading. `infra/ clean` is a
+ * true statement, and a reader seeing a green Policy row has no way to tell
+ * from it that half of `policy/` never loaded — they would have to know this
+ * file's target list by heart to notice the absence. The failure that behaviour
+ * invites is not hypothetical: rename `gitops/` and the Kubernetes rules stop
+ * running everywhere, including where they are the only enforcement there is,
+ * and every pipeline stays green while it happens.
+ *
+ * Named rather than counted, and by policy set rather than by directory,
+ * because "kubernetes rules not run" is the fact somebody needs; "1 target
+ * skipped" would send them back to this file to find out which.
+ */
+function scopeNote(absent: PolicyTarget[]): string {
+  if (absent.length === 0) return "";
+  const missing = absent.map((t) => `${t.policies} rules not run: no ${t.dir}/`);
+  return ` (${missing.join("; ")})`;
+}
+
 const policy: Gate = {
   id: "policy",
   title: "Policy",
@@ -105,23 +236,18 @@ const policy: Gate = {
     "fix. A violation caught here is a review comment; caught at admission it is a failed " +
     "deploy with the change already merged.",
   run: async (ctx) => {
-    if (!(await conftestAvailable(ctx))) {
-      return {
-        status: "failed",
-        summary: "conftest is not installed",
-        details:
-          "The policy gate needs conftest on PATH: `brew install conftest`, or see " +
-          "https://www.conftest.dev/install/. It fails rather than skips because a gate " +
-          "that skips when its tool is missing reports success for work it did not do.",
-      };
-    }
+    if (!(await conftestAvailable(ctx))) return conftestMissing("policy");
 
     const checked: string[] = [];
+    const absent: PolicyTarget[] = [];
     const warnings: string[] = [];
 
     for (const target of POLICY_TARGETS) {
       const dir = join(ctx.appDir, target.dir);
-      if (!(await ctx.exists(dir))) continue;
+      if (!(await ctx.exists(dir))) {
+        absent.push(target);
+        continue;
+      }
 
       const { code, stdout, stderr } = await ctx.exec(
         [
@@ -153,15 +279,16 @@ const policy: Gate = {
     // directory has no infrastructure and no manifests of its own, and saying
     // "passed" would credit it for a check that never ran.
     if (checked.length === 0) {
-      return { status: "skipped", summary: `nothing to check: no ${POLICY_TARGETS.map((t) => `${t.dir}/`).join(" or ")}` };
+      return { status: "skipped", summary: `nothing to check: no ${absent.map((t) => `${t.dir}/`).join(" or ")}` };
     }
 
     const where = checked.join(", ");
-    if (warnings.length === 0) return { status: "passed", summary: `${where} clean` };
+    const note = scopeNote(absent);
+    if (warnings.length === 0) return { status: "passed", summary: `${where} clean${note}` };
 
     return {
       status: "passed",
-      summary: `${where}: ${warnings.length} finding(s), reported not blocking`,
+      summary: `${where}: ${warnings.length} finding(s), reported not blocking${note}`,
       details: warnings.join("\n"),
     };
   },
@@ -380,8 +507,19 @@ const infra: Gate = {
 
 /** `ghcr.io/owner/app:sha` and a digest, recombined into something pullable. */
 function referenceFor(image: ImageName, digest: string): string {
-  return `${image.ref.split(":")[0]}@${digest}`;
+  return `${repositoryOf(image.ref)}@${digest}`;
 }
+
+/**
+ * Every repo digest the daemon holds for this tag, one per line.
+ *
+ * `range` rather than `index .RepoDigests 0`, because the caller has to see the
+ * whole list to pick the entry belonging to the repository it is about to name
+ * — see `digestForRepository`. It also removes a failure mode of `index`, which
+ * errors on an empty list and so reported "docker inspect failed" for an image
+ * that simply had never been pushed.
+ */
+const REPO_DIGESTS_FORMAT = "{{range .RepoDigests}}{{println .}}{{end}}";
 
 /**
  * Has this exact commit already been built and published?
@@ -389,7 +527,8 @@ function referenceFor(image: ImageName, digest: string): string {
  * This exists because `docker build` is not reproducible. Docker stamps a
  * wall-clock `created` into the image config on every build, so building the
  * same source twice yields two different digests — and since the digest is what
- * gets committed to the deployment repo, a re-run of an unchanged pipeline was
+ * gets committed to this repository's own gitops/ tree, a re-run of an
+ * unchanged pipeline was
  * producing a fresh commit and rolling the pods for a byte-identical
  * application. Not a hypothetical: it was found by re-running a green pipeline
  * and diffing the result. See decision 38.
@@ -413,13 +552,13 @@ async function publishedDigest(ctx: GateContext, image: ImageName): Promise<stri
   if (pulled.code !== 0) return null;
 
   const inspect = await ctx.exec(
-    ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", image.ref],
+    ["docker", "inspect", "--format", REPO_DIGESTS_FORMAT, image.ref],
     { cwd: ctx.appDir },
   );
   if (inspect.code !== 0) return null;
 
   try {
-    return digestFrom(inspect.stdout);
+    return digestForRepository(repoDigestsIn(inspect.stdout), repositoryOf(image.ref));
   } catch {
     return null;
   }
@@ -466,8 +605,8 @@ const imageBuild: Gate = {
  * control while enforcing nothing.
  *
  * What makes it defensible rather than merely convenient is the second half:
- * reporting is not silence. The finding lands in the pull request comment with
- * the fixable ones first, so ignoring one is a decision somebody made rather
+ * reporting is not silence. The finding lands in the run's GitHub step summary
+ * with the fixable ones first, so ignoring one is a decision somebody made rather
  * than one nobody saw. And the parts of this that a change genuinely can cause
  * — credentials written into a Terraform provider, an image pulled from
  * somewhere other than `ghcr.io`, an unpinned tag — are blocking, in the policy
@@ -575,7 +714,8 @@ const imagePublish: Gate = {
   title: "Image publish",
   severity: "blocking",
   rationale:
-    "The digest committed to the deployment repo has to resolve on any machine. A push that " +
+    "The digest committed to this repository's own gitops/ tree has to resolve on any machine. " +
+    "A push that " +
     "silently failed would surface as an ImagePullBackOff much later, far from the cause.",
   appliesTo: (ctx) => ctx.event === "push",
   run: async (ctx) => {
@@ -602,9 +742,9 @@ const imagePublish: Gate = {
     if (pushed.status !== "passed") return pushed;
 
     // Resolve the digest immediately. The tag is a moving handle; the digest is
-    // what the deployment repo will pin, and it only exists once pushed.
+    // what the gitops/ manifests will pin, and it only exists once pushed.
     const inspect = await ctx.exec(
-      ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", image.ref],
+      ["docker", "inspect", "--format", REPO_DIGESTS_FORMAT, image.ref],
       { cwd: ctx.appDir },
     );
     if (inspect.code !== 0) {
@@ -614,10 +754,12 @@ const imagePublish: Gate = {
     // A zero exit with output in an unexpected shape is caught here rather than
     // left to throw. Both are the same failure to the reader, and this one now
     // feeds a machine channel, so it is worth reporting as a gate result with
-    // the offending output attached instead of as a stack trace.
+    // the offending output attached instead of as a stack trace. A push that
+    // reported success and left no digest for this repository lands here too,
+    // which is the right place for it: the gate's job is to state a digest.
     let digest: string;
     try {
-      digest = digestFrom(inspect.stdout);
+      digest = digestForRepository(repoDigestsIn(inspect.stdout), repositoryOf(image.ref));
     } catch (err) {
       return {
         status: "failed",
@@ -635,9 +777,13 @@ function appNameOf(ctx: GateContext): string {
   return ctx.appDir.split("/").filter(Boolean).pop() ?? "app";
 }
 
-// Policy first: it needs no install, no network and no Docker, so it is the
-// cheapest thing in the list that can fail — and the ordering rule above is
-// that the cheapest failure comes first.
+// The two static-policy gates first: neither needs an install, a network or
+// Docker, so they are the cheapest things in the list that can fail — and the
+// ordering rule above is that the cheapest failure comes first. Base image
+// ahead of policy between the two, because it parses one file where policy
+// walks two directory trees, and because what it guards is the input to the
+// most expensive gate here. Finding out that a base image is unpinned after
+// spending a minute building an image on it is a minute spent to learn nothing.
 //
 // Security sits between building the image and publishing it, which is the
 // only place it can sit: it scans an artefact, so the artefact has to exist,
@@ -646,6 +792,7 @@ function appNameOf(ctx: GateContext): string {
 // ordering is what the run reads like, and reading like an afterthought is how
 // a check becomes one.
 export const GATES: Gate[] = [
+  baseImage,
   policy,
   deps,
   typecheck,

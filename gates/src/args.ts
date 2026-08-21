@@ -16,11 +16,13 @@ export type Options = {
   event: Event;
   /** Restrict the run to these gate ids. Empty means all of them. */
   only: string[];
-  /** Where to write the pull request summary, if anywhere. */
+  /** Where to write the Markdown run summary, if anywhere. */
   markdownPath?: string;
   /** Where to write the collected facts as JSON, if anywhere. */
   factsPath?: string;
   colour: boolean;
+  /** Print the usage text and run nothing. */
+  help?: boolean;
 };
 
 export class UsageError extends Error {}
@@ -30,9 +32,11 @@ export const USAGE = `usage: gates [options]
   --app-dir <path>   repository to gate (default: current directory)
   --event <name>     local | pull_request | push (default: from GitHub env)
   --only <ids>       comma-separated gate ids to run
-  --markdown <path>  write the pull request summary here
+  --markdown <path>  write the Markdown run summary here; CI points this at
+                     $GITHUB_STEP_SUMMARY
   --facts-out <path> write what the gates found, as JSON, here
   --no-colour        plain output
+  --help, -h         print this and exit
 `;
 
 export function eventFrom(env: Record<string, string | undefined>): Event {
@@ -56,6 +60,14 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
     // Colour is noise in a CI log file, and GitHub sets CI on every runner.
     colour: !env.CI,
   };
+
+  // Answered before anything else is read, so asking for help works on a
+  // half-written command line rather than reporting the first thing wrong with
+  // it. Nothing else in argv can matter once it is present: the run is not
+  // going to happen.
+  if (argv.includes("--help") || argv.includes("-h")) {
+    return { ...options, help: true };
+  }
 
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;

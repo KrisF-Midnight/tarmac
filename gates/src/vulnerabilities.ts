@@ -78,7 +78,7 @@ export function fixable(vulns: Vulnerability[]): Vulnerability[] {
 }
 
 /**
- * The one line that reaches the pull request table.
+ * The one line that reaches the step summary table.
  *
  * It leads with the fixable count rather than the total, because the total is a
  * property of the base image and the calendar, and the fixable count is the
