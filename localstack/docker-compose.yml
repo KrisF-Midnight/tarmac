@@ -26,7 +26,16 @@ services:
       # provider v6 reads bucket tags through ListTagsForResource, which is an
       # s3control call. Without it every tagged bucket fails to create with a
       # 501 that names a service the Terraform never mentions.
-      SERVICES: s3,s3control
+      #
+      # sts is here for the same reason and was learned the harder way. The
+      # provider calls GetCallerIdentity to validate credentials before it does
+      # anything else, so every apply needs it. It used to arrive transitively
+      # because ssm was listed; removing ssm took it too, and nothing caught it
+      # because the stand-in was already running with sts loaded and no apply
+      # ran against a cold one afterwards. List what is needed rather than
+      # inheriting it. Verified against this image: s3,s3control reports sts
+      # disabled, s3,s3control,ssm reports it available.
+      SERVICES: s3,s3control,sts
       AWS_DEFAULT_REGION: eu-west-1
       PERSISTENCE: 1
     volumes:
