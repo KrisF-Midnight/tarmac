@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs and omissions &mdash; Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="rail">
+  <a class="rail__brand" href="index.html">
+    <strong>Field Guide</strong>
+    <span>tarmac &amp; greeter</span>
+  </a>
+  <div class="toc">
+    <div class="toc__part">
+      <a href="app.html">1 &nbsp;The app</a>
+      <a href="ci.html">2 &nbsp;CI</a>
+      <a href="policy.html">3 &nbsp;Policy</a>
+      <a href="delivery.html">4 &nbsp;Delivery</a>
+      <a href="infrastructure.html">5 &nbsp;Infrastructure</a>
+      <a href="local.html">6 &nbsp;Local</a>
+      <a href="docs.html" aria-current="page">7 &nbsp;Docs and omissions</a>
+    </div>
+  </div>
+  <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+</nav>
+
+<main class="page">
+  <p class="eyebrow">Chapter 7</p>
+  <h1>Docs and omissions</h1>
+
+  <p class="standfirst">Five documents a platform owes its readers &mdash; the entry point, the reasoning, the absences, the table that must not go stale, and the path to a first green run.</p>
+
+  <div class="note note--plain">
+    <span class="note__label">Moving parts</span>
+    <p>Four Markdown files in <code>docs/</code> and a README &mdash; about 2,500 lines, of which <code>decisions.md</code> is 1,800. <code>make gate-matrix</code> generates one of them from <code>gates/src/registry.ts</code>; <code>make check-gate-matrix</code> diffs it in CI. No wiki, no site generator.</p>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["A decision"] --> B["Decision record"]
+  A --> C["Gate registry in code"]
+  C --> D["Generated matrix"]
+  D --> E["Drift check in CI"]
+</pre>
+    <figcaption>Only the lower path can be checked by a machine; the record above it stays honest by a rule instead &mdash; entries are superseded, never rewritten.</figcaption>
+  </figure>
+
+  <h2>Entry point</h2>
+
+  <p>The README is the document nobody is sent to and everyone reads. Twelve sections, prerequisites to breaking glass, each handing the reader off &mdash; to <a href="local.html">a first <code>make up</code></a>, or to the entry that says why.</p>
+
+  <h2>Decisions</h2>
+
+  <p>Fifty-eight numbered entries: why, what was rejected, what it costs. Nothing is rewritten &mdash; entry 45 corrects entry 39 by superseding it, and both stay readable.</p>
+
+  <h2>Omissions</h2>
+
+  <p>Absences sorted by honesty: cut before the work started, cut with it in reach, and gaps &mdash; missing with no defence, because dressing a hole up as a choice is what such a page invites.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Absent</th><th>Which kind</th><th>Reasoning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Service mesh</td><td>Cut before the work started</td><td>One stateless service. It would be infrastructure with nothing to do.</td></tr>
+        <tr><td>A post-deploy smoke test</td><td>Cut with the work in reach</td><td>Buildable with what already exists, and chosen against: the ingress answering and the greeting arriving from a bucket already prove it, twice.</td></tr>
+        <tr><td>An SLO and its dashboards</td><td>Cut, and named first in the queue</td><td>The largest real loss. A metrics stack is expensive on a laptop already running a cluster, and an SLO over a service with no traffic never moves.</td></tr>
+        <tr><td><code>terraform plan</code> on the pull request</td><td>Gap</td><td>A change to a shared module can reach the default branch without anyone having read what it would do.</td></tr>
+        <tr><td>RBAC on direct workload creation</td><td>Gap</td><td>Admission constrains <em>what</em> may be created; nothing yet constrains <em>who</em> may create it outside git.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Generated</h2>
+
+  <p>One document is not written at all. <code>make gate-matrix</code> renders the <a href="ci.html">gate table</a> from the registry the runner reads; <code>make check-gate-matrix</code> diffs it. A stale matrix fails the platform&rsquo;s own pipeline.</p>
+
+  <div class="note">
+    <span class="note__label">The limit of generating</span>
+    <p>The drift check compares the file to what the generator emits, not to what is true. The rows are pinned to the registry; the preamble above them is a string literal inside the generator, so a sentence that is wrong there regenerates cleanly forever &mdash; and reading the output can never reveal it.</p>
+  </div>
+
+  <h2>Onboarding</h2>
+
+  <p>Onboarding is one-time setup in order, ending with what to watch and in which order. It names the two steps that are clicks in a web UI, and why neither can be automated.</p>
+
+  <div class="paths">
+    <span class="paths__label">Where to look</span>
+    <ul>
+      <li><code>tarmac/README.md</code> &mdash; the way in, and the only document that assumes you have read none of the others</li>
+      <li><code>tarmac/docs/decisions.md</code> &mdash; the fifty-eight entries, then every accepted cost gathered into one closing table and every rejected tool into a running list</li>
+      <li><code>tarmac/docs/omissions.md</code> &mdash; each absence under a heading that says which kind it is, ending with the gaps that carry none</li>
+      <li><code>tarmac/docs/gate-matrix.md</code> &mdash; generated by <code>renderGateMatrix</code> in <code>gates/src/report.ts</code>; its first line tells you to edit the registry instead</li>
+      <li><code>tarmac/docs/onboarding.md</code> &mdash; the GitHub App, the two secrets, the manual visibility click, and the re-run that must produce no commit</li>
+    </ul>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--prev" href="local.html"><span>Previous</span><strong>6 &middot; Local</strong></a>
+  </nav>
+</main>
+
+</div>
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

@@ -1,0 +1,566 @@
+/* ---------------------------------------------------------------------------
+   Field guide stylesheet.
+
+   Palette is taken from airfield ground marking: concrete apron greys, the
+   yellow of a taxiway centreline, and the red of a mandatory-instruction sign
+   for anything that blocks. Type is a three-role pairing — grotesque for
+   headings, serif for running prose (this is meant to be read, not scanned),
+   mono for labels, navigation and every piece of machine text.
+
+   No webfonts, no CDN, no JavaScript required to read a page. Works from
+   file:// and works published.
+--------------------------------------------------------------------------- */
+
+:root {
+  --ground:      #F1F0EB;
+  --surface:     #FBFAF6;
+  --surface-alt: #E9E7E0;
+  --ink:         #15181B;
+  --ink-soft:    #576169;
+  --ink-faint:   #8B939A;
+  --rule:        #D8D5CC;
+  --rule-strong: #B9B5A9;
+
+  --accent:      #8A6604;
+  --accent-mark: #E9B824;
+  --accent-wash: #FAF0D2;
+
+  --blocking:      #9E2B18;
+  --blocking-wash: #F7E4DF;
+  --reporting:     #3F6786;
+  --reporting-wash:#E2EBF2;
+
+  --font-display: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-body: ui-serif, Charter, "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --measure: 68ch;
+  --rail: 17.5rem;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:      #131719;
+    --surface:     #1A1F22;
+    --surface-alt: #22282C;
+    --ink:         #E7E5DF;
+    --ink-soft:    #9BA5AC;
+    --ink-faint:   #6B757C;
+    --rule:        #2C3338;
+    --rule-strong: #3E474D;
+
+    --accent:      #E9B824;
+    --accent-mark: #E9B824;
+    --accent-wash: #2A2415;
+
+    --blocking:      #E4796180;
+    --blocking:      #E37A62;
+    --blocking-wash: #2E1C18;
+    --reporting:     #83AACC;
+    --reporting-wash:#182530;
+
+    color-scheme: dark;
+  }
+}
+
+/* The viewer's own toggle stamps data-theme on the root; it must win over the
+   media query in both directions, so both themes are restated here. */
+:root[data-theme="light"] {
+  --ground: #F1F0EB; --surface: #FBFAF6; --surface-alt: #E9E7E0;
+  --ink: #15181B; --ink-soft: #576169; --ink-faint: #8B939A;
+  --rule: #D8D5CC; --rule-strong: #B9B5A9;
+  --accent: #8A6604; --accent-mark: #E9B824; --accent-wash: #FAF0D2;
+  --blocking: #9E2B18; --blocking-wash: #F7E4DF;
+  --reporting: #3F6786; --reporting-wash: #E2EBF2;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --ground: #131719; --surface: #1A1F22; --surface-alt: #22282C;
+  --ink: #E7E5DF; --ink-soft: #9BA5AC; --ink-faint: #6B757C;
+  --rule: #2C3338; --rule-strong: #3E474D;
+  --accent: #E9B824; --accent-mark: #E9B824; --accent-wash: #2A2415;
+  --blocking: #E37A62; --blocking-wash: #2E1C18;
+  --reporting: #83AACC; --reporting-wash: #182530;
+  color-scheme: dark;
+}
+
+/* --- base ---------------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--ink); text-decoration-color: var(--rule-strong); text-underline-offset: 0.18em; }
+a:hover { text-decoration-color: var(--accent-mark); }
+a:focus-visible,
+button:focus-visible { outline: 2px solid var(--accent-mark); outline-offset: 3px; border-radius: 2px; }
+
+/* --- shell --------------------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  align-items: start;
+  min-height: 100vh;
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  padding: 2rem 1.5rem 3rem;
+  border-right: 1px solid var(--rule);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.rail__brand { display: flex; flex-direction: column; gap: 0.2rem; text-decoration: none; }
+.rail__brand strong {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.rail__brand span {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--ink-faint);
+}
+
+.toc { display: flex; flex-direction: column; gap: 1.4rem; }
+.toc__part { display: flex; flex-direction: column; gap: 0.4rem; }
+.toc__label {
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--ink-faint);
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--rule);
+}
+.toc a,
+.toc span.toc__stub {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  text-decoration: none;
+  color: var(--ink-soft);
+  padding: 0.3rem 0.5rem 0.3rem 0.7rem;
+  border-left: 2px solid transparent;
+  display: block;
+}
+.toc a:hover { color: var(--ink); background: var(--surface-alt); border-left-color: var(--rule-strong); }
+.toc a[aria-current="page"] {
+  color: var(--ink);
+  background: var(--accent-wash);
+  border-left-color: var(--accent-mark);
+  font-weight: 600;
+}
+.toc span.toc__stub { color: var(--ink-faint); opacity: 0.75; cursor: default; }
+.toc span.toc__stub::after {
+  content: "soon";
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-left: 0.5rem;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  padding: 0 0.28rem;
+  border-radius: 2px;
+}
+
+.theme-toggle {
+  margin-top: auto;
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: transparent;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); border-color: var(--rule-strong); }
+
+/* --- page ---------------------------------------------------------------- */
+
+.page { padding: 3.25rem 3rem 5rem; max-width: calc(var(--measure) + 12rem); }
+.page > * { max-width: var(--measure); }
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+  margin: 0 0 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 2px;
+  /* taxiway centreline */
+  background: repeating-linear-gradient(90deg, var(--accent-mark) 0 10px, transparent 10px 18px);
+  opacity: 0.55;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4.4vw, 2.9rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  margin: 0 0 1rem;
+  text-wrap: balance;
+}
+
+.standfirst {
+  font-size: 1.2rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin: 0 0 2.5rem;
+  text-wrap: pretty;
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  margin: 3rem 0 0.9rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+  text-wrap: balance;
+}
+
+h3 {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 2rem 0 0.6rem;
+}
+
+p { margin: 0 0 1.1rem; text-wrap: pretty; }
+
+ul, ol { margin: 0 0 1.2rem; padding-left: 1.3rem; }
+li { margin-bottom: 0.45rem; }
+li::marker { color: var(--ink-faint); }
+
+strong { font-weight: 700; }
+
+/* --- machine text -------------------------------------------------------- */
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--surface-alt);
+  padding: 0.1em 0.34em;
+  border-radius: 2px;
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  margin: 0 0 1.4rem;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+.filename {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  margin: 0 0 0.4rem;
+  display: block;
+}
+
+/* --- tables -------------------------------------------------------------- */
+
+.table-wrap { overflow-x: auto; margin: 0 0 1.5rem; max-width: none; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+th {
+  text-align: left;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.11em;
+  color: var(--ink-faint);
+  padding: 0 0.9rem 0.5rem 0;
+  border-bottom: 1px solid var(--rule-strong);
+  white-space: nowrap;
+}
+td {
+  padding: 0.55rem 0.9rem 0.55rem 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  line-height: 1.5;
+}
+tr:last-child td { border-bottom: none; }
+
+/* --- pills --------------------------------------------------------------- */
+
+.pill {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 2px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.pill--blocking  { background: var(--blocking-wash);  color: var(--blocking);  }
+.pill--reporting { background: var(--reporting-wash); color: var(--reporting); }
+.pill--neutral   { background: var(--surface-alt);    color: var(--ink-soft);  }
+
+/* --- asides -------------------------------------------------------------- */
+
+.note {
+  border-left: 3px solid var(--accent-mark);
+  background: var(--accent-wash);
+  padding: 1rem 1.2rem;
+  margin: 0 0 1.5rem;
+  border-radius: 0 3px 3px 0;
+}
+.note > :last-child { margin-bottom: 0; }
+.note__label {
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--accent);
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+}
+
+.note--plain { border-left-color: var(--rule-strong); background: var(--surface); }
+.note--plain .note__label { color: var(--ink-faint); }
+
+/* --- where to look -------------------------------------------------------
+   Footnote weight, not callout weight: a hairline and a tight list of paths
+   at the foot of a chapter. Deliberately not a box.
+-------------------------------------------------------------------------- */
+
+.paths {
+  margin: 2.5rem 0 0;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--rule);
+}
+.paths__label {
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--ink-faint);
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+.paths ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.paths li {
+  margin: 0 0 0.3rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.paths li:last-child { margin-bottom: 0; }
+.paths li::marker { content: none; }
+.paths code {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  background: none;
+  padding: 0;
+  color: var(--ink);
+}
+
+/* --- diagrams ------------------------------------------------------------ */
+
+figure { margin: 0 0 1.8rem; max-width: none; }
+figure svg { width: 100%; height: auto; display: block; }
+.diagram {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1.4rem 1.2rem;
+  text-align: center;
+  /* A wide diagram scrolls inside its own frame; the page body never does. */
+  overflow-x: auto;
+}
+figcaption {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-faint);
+  margin-top: 0.6rem;
+  line-height: 1.5;
+}
+
+/* Mermaid source lives in a <pre>, which would otherwise flash as a monospace
+   code block while the script loads. It stays hidden and stripped of every
+   <pre> affordance until book.js stamps data-fg-rendered on it. */
+pre.mermaid {
+  display: none;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  white-space: normal;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+pre.mermaid[data-fg-rendered] { display: block; }
+pre.mermaid svg,
+.diagram pre.mermaid svg {
+  display: block;
+  margin: 0 auto;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+}
+
+/* --- pager --------------------------------------------------------------- */
+
+.pager {
+  display: flex;
+  gap: 1rem;
+  margin-top: 3.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+}
+.pager a {
+  flex: 1;
+  text-decoration: none;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  background: var(--surface);
+}
+.pager a:hover { border-color: var(--accent-mark); }
+.pager a span {
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+}
+.pager a strong { font-family: var(--font-display); font-size: 0.95rem; letter-spacing: -0.01em; }
+.pager a.pager--next { text-align: right; align-items: flex-end; }
+
+/* --- index-only ----------------------------------------------------------
+   Cover-only layout. The contents are the page there, so the nav rail would
+   only say the same thing twice; the column is centred instead. Built from
+   the tokens already on :root — no new colours, no redefined classes.
+-------------------------------------------------------------------------- */
+
+.cover { margin-inline: auto; }
+.cover__top { display: flex; justify-content: flex-end; margin: 0 0 1.5rem; max-width: none; }
+.cover__sub {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  margin: 0 0 1.6rem;
+}
+.cover-stubs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.6rem;
+  margin: 0 0 2rem;
+  max-width: none;
+}
+
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin: 0 0 2rem;
+  max-width: none;
+}
+.card {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1.1rem 1.2rem;
+  background: var(--surface);
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+a.card:hover { border-color: var(--accent-mark); }
+.card__n {
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+.card__t { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.015em; font-size: 1.02rem; }
+.card__d { font-size: 0.9rem; color: var(--ink-soft); line-height: 1.45; }
+.card--stub { opacity: 0.55; }
+
+/* --- responsive ---------------------------------------------------------- */
+
+@media (max-width: 62rem) {
+  .shell { grid-template-columns: 1fr; }
+  .rail {
+    position: static;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+  }
+  .page { padding: 2.25rem 1.5rem 4rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

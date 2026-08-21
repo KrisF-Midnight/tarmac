@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local &mdash; Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="rail">
+  <a class="rail__brand" href="index.html">
+    <strong>Field Guide</strong>
+    <span>tarmac &amp; greeter</span>
+  </a>
+  <div class="toc">
+    <div class="toc__part">
+      <a href="app.html">1 &nbsp;The app</a>
+      <a href="ci.html">2 &nbsp;CI</a>
+      <a href="policy.html">3 &nbsp;Policy</a>
+      <a href="delivery.html">4 &nbsp;Delivery</a>
+      <a href="infrastructure.html">5 &nbsp;Infrastructure</a>
+      <a href="local.html" aria-current="page">6 &nbsp;Local</a>
+      <a href="docs.html">7 &nbsp;Docs and omissions</a>
+    </div>
+  </div>
+  <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+</nav>
+
+<main class="page">
+  <p class="eyebrow">Chapter 6</p>
+  <h1>Local</h1>
+
+  <p class="standfirst">Everything here runs on a laptop with no cloud account, which buys reproducibility and costs you IAM &mdash; the one control a real deployment leans on hardest.</p>
+
+  <div class="note note--plain">
+    <span class="note__label">Moving parts</span>
+    <p>kind runs a single-node cluster on Docker, LocalStack stands in for AWS beside it, ingress-nginx answers on port 8080, and a Makefile drives the lot. No Helm, no Skaffold.</p>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["Browser on port 8080"] --> B["ingress-nginx"]
+  B --> C["greeter pods"]
+  C --> D["aws Service"]
+  D --> E["LocalStack container"]
+</pre>
+    <figcaption>The last hop is the one object git does not describe &mdash; its address comes from the live Docker container and goes stale whenever the emulator restarts.</figcaption>
+  </figure>
+
+  <h2>Entrypoint</h2>
+
+  <p><code>make up</code> runs seven steps in a fixed order: cluster, <a href="policy.html">admission policies</a>, emulator, Terraform, ingress, Argo CD, endpoint. Each is idempotent, so it doubles as the repair command.</p>
+
+  <div class="note">
+    <span class="note__label">Known gap</span>
+    <p>Argo CD syncs pushed <code>main</code>, not this working tree. An uncommitted change under <code>gitops/</code> is invisible to the cluster.</p>
+  </div>
+
+  <h2>Cluster &amp; cloud substitute</h2>
+
+  <p>kind gives one node, digest-pinned at Kubernetes 1.36.1. LocalStack runs beside the cluster in Docker rather than inside it, serving only <code>s3</code> and <code>s3control</code>.</p>
+
+  <h2>Access</h2>
+
+  <p>kind maps node port 80 to host 8080, so ingress-nginx serves the app at <code>localhost:8080</code> &mdash; no hostname, no TLS. Argo CD&rsquo;s UI stays behind a port-forward.</p>
+
+  <h2>Parity gaps</h2>
+
+  <p>The emulator is not AWS and one node is not a cluster.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>What is faked</th><th>What it costs</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>IAM</td><td>LocalStack authorises nothing: any credential works and no bucket policy is read. The encryption and public-access blocks <a href="infrastructure.html">the Terraform declares</a> are recorded and never enforced, so a rule that would fail in a real account passes here</td></tr>
+        <tr><td>Workload identity</td><td>The pod reads a static key pair from a Secret committed to <code>gitops/</code>. IRSA needs <code>AssumeRoleWithWebIdentity</code>, which the app&rsquo;s S3 client does not implement &mdash; that move is an application change, not a manifest change</td></tr>
+        <tr><td>Service discovery for &ldquo;AWS&rdquo;</td><td>A selectorless Service, bound to the emulator by an EndpointSlice that bootstrap generates because Docker allocates the address. It is the one piece of cluster state outside git, it goes stale on every emulator restart, and the symptom is a readiness timeout that reads as a broken app. <code>make aws-endpoint</code> is the fix</td></tr>
+        <tr><td>The edge</td><td>No hostname, no TLS block, no cloud load balancer. ingress-nginx itself is retired upstream and its supported table stops one minor below this cluster</td></tr>
+        <tr><td>Scale and failure</td><td>One node, two replicas, no traffic. Scheduling, eviction and a node going away are never put to the test, so nothing here tells you the deployment survives them</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Inspection &amp; reset</h2>
+
+  <p><code>make status</code> asks the cluster and containers, never the manifests &mdash; it names an unbound policy or a stale emulator address. <code>make down</code> keeps the Terraform state volume; <code>make down-purge</code> discards it. The split is deliberate &mdash; the command typed by habit must not be the one that loses state.</p>
+
+  <div class="paths">
+    <span class="paths__label">Where to look</span>
+    <ul>
+      <li><code>tarmac/Makefile</code> &mdash; every verb the platform has, and the order <code>up</code> runs them in</li>
+      <li><code>tarmac/scripts/</code> &mdash; one script per step, each safe to re-run, and <code>versions.sh</code> where every fetched pin lives</li>
+      <li><code>tarmac/kind/cluster.yaml</code> &mdash; the single node, its digest pin and the 8080 mapping</li>
+      <li><code>tarmac/localstack/docker-compose.yml</code> &mdash; the AWS stand-in, and which services it bothers to emulate</li>
+      <li><code>tarmac/scripts/status.sh</code> &mdash; live state rather than desired state, including the stale-address check</li>
+    </ul>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--prev" href="infrastructure.html"><span>Previous</span><strong>5 &middot; Infrastructure</strong></a>
+    <a class="pager--next" href="docs.html"><span>Next</span><strong>7 &middot; Docs and omissions</strong></a>
+  </nav>
+</main>
+
+</div>
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

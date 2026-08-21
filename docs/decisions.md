@@ -1,6 +1,6 @@
 # Design Decisions
 
-Fifty-eight decisions, why each was made, what was rejected, and what it costs.
+Fifty-nine decisions, why each was made, what was rejected, and what it costs.
 
 A decision that stops being true gets a new entry marking the old one superseded — the wrong turn
 stays in the record.
@@ -65,6 +65,7 @@ stays in the record.
 | [56](#56--image-pinning-follows-kubectl-debug-resource-limits-deliberately-do-not) | Image pinning follows `kubectl debug`; resource limits deliberately do not |
 | [57](#57--the-admission-policies-are-tested-by-evaluating-their-cel-without-a-cluster) | The admission policies are tested by evaluating their CEL, without a cluster |
 | [58](#58--the-promoters-write-guard-names-the-event-not-just-the-runner) | The promoter's write guard names the event, not just the runner |
+| [59](#59--the-illustrated-guide-ships-inside-the-repo-not-on-a-pages-branch) | The illustrated guide ships inside the repo, not on a Pages branch |
 
 ---
 
@@ -1715,6 +1716,31 @@ together, and the comment above `writesAllowed` says so because nothing enforces
 
 ---
 
+### 59 — The illustrated guide ships inside the repo, not on a Pages branch
+
+**Why.** A guide is only a deliverable if it can be read, and the one thing certain to reach a
+reader is the clone they already have. `docs/site/` puts the eight chapters where anyone who
+opens the repository will find them, and the README says so in its second paragraph. It also
+binds the prose to the code it describes: a chapter that stops being true and the commit that
+made it untrue land in the same diff, in front of the same reviewer. The pages render from disk
+with no build step and fetch nothing, so *readable* does not depend on a server being up.
+
+**Rejected.** *A `gh-pages` branch* — gives a URL, but the site would then live on a branch no
+gate runs against and drift from `main` silently; it also needs Pages switched on in repository
+settings, which is a console click this stack has no Terraform over, so the deliverable would
+hang off configuration that is not in the repository. *Ship it outside the repositories* —
+whoever is handed only a clone URL never learns it exists. *Flat in `docs/`* — eight HTML files
+and an `assets/` directory alongside four markdown documents buries the reference material under
+the guide to it.
+
+**Cost.** `assets/mermaid.min.js` is 3.4 MB of vendored JavaScript committed into a tree that
+otherwise pins every dependency by digest or checksum; nothing verifies it, and no gate would
+notice if it changed. The guide also restates what `README.md` and `docs/` already say, so a fact
+now has two places to go stale — and unlike `gate-matrix.md`, which `make check-gate-matrix`
+holds to its source, nothing compares the two.
+
+---
+
 ## Accepted costs, collected
 
 Every cost accepted above, in one place.
@@ -1795,6 +1821,7 @@ Every cost accepted above, in one place.
 | 56 | An ephemeral container consumes capacity nothing accounts for, and nothing at admission can change that |
 | 57 | The CEL interpreter is a second implementation of somebody else's semantics — no type checking, no namespace selector, and it will drift |
 | 58 | The write guard is a pair split across two files, only one half of it tested, and a push to a side branch still satisfies the tested half |
+| 59 | 3.4 MB of unverified vendored JavaScript in a tree that pins everything else, and a second place for every fact to go stale with nothing comparing the two |
 
 ## Rejected tools, collected
 

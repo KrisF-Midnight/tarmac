@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI &mdash; Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="rail">
+  <a class="rail__brand" href="index.html">
+    <strong>Field Guide</strong>
+    <span>tarmac &amp; greeter</span>
+  </a>
+  <div class="toc">
+    <div class="toc__part">
+      <a href="app.html">1 &nbsp;The app</a>
+      <a href="ci.html" aria-current="page">2 &nbsp;CI</a>
+      <a href="policy.html">3 &nbsp;Policy</a>
+      <a href="delivery.html">4 &nbsp;Delivery</a>
+      <a href="infrastructure.html">5 &nbsp;Infrastructure</a>
+      <a href="local.html">6 &nbsp;Local</a>
+      <a href="docs.html">7 &nbsp;Docs and omissions</a>
+    </div>
+  </div>
+  <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+</nav>
+
+<main class="page">
+  <p class="eyebrow">Chapter 2</p>
+  <h1>CI</h1>
+
+  <p class="standfirst">Nine checks over one commit, run in a fixed order by a program rather than a YAML script &mdash; so a laptop can run the same logic.</p>
+
+  <div class="note note--plain">
+    <span class="note__label">Moving parts</span>
+    <p>GitHub Actions runs the workflow, but the logic is a TypeScript program on Bun. <code>docker build</code> builds, Trivy scans, <code>ghcr.io</code> stores, and a short-lived GitHub App token writes back.</p>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["Push or pull request"] --> B["Gates job"]
+  B --> C["Image reference"]
+  C --> D["Release job"]
+  D --> E["Kubernetes manifest"]
+</pre>
+    <figcaption>A side-branch push still publishes an image; only a push to the default branch reaches the manifests.</figcaption>
+  </figure>
+
+  <h2>Trigger &amp; inputs</h2>
+
+  <p>An application calls this pipeline on every push and pull request, against its own commit, supplying the tarmac ref, the app directory, two App secrets, a <code>typecheck</code> and a <code>test</code> script, and a root Dockerfile.</p>
+
+  <h2>Checks</h2>
+
+  <p>A gate is a named check that can fail the run; one whose subject is absent is skipped, not passed.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Gates, in run order</th><th>What it establishes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>base-image</code>, <code>policy</code></td><td>The base image is pinned to an exact digest, and the Terraform and Kubernetes files <a href="policy.html">satisfy the rules</a> &mdash; though <code>policy</code> also lists advisory findings and passes anyway. <span class="pill pill--blocking">blocking</span></td></tr>
+        <tr><td><code>deps</code>, <code>typecheck</code>, <code>unit-tests</code></td><td>The lockfile installs clean, the types check, the app&rsquo;s own suite passes. <span class="pill pill--blocking">blocking</span></td></tr>
+        <tr><td><code>infra</code>, <code>image-build</code></td><td>Every Terraform module is formatted and valid; the image builds. <span class="pill pill--blocking">blocking</span></td></tr>
+        <tr><td><code>security</code></td><td>Trivy scans the image just built. Findings are recorded, never enforced &mdash; disclosures arrive on their own schedule, not in the diff. <span class="pill pill--reporting">reporting</span></td></tr>
+        <tr><td><code>image-publish</code></td><td>Pushed to <code>ghcr.io</code>, GitHub&rsquo;s container registry, tagged with the commit SHA. Push events only, so it never blocks a pull request. <span class="pill pill--blocking">blocking</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Orchestration &amp; severity</h2>
+
+  <p>Gates run cheapest-first, so the least expensive failure surfaces soonest. <code>security</code> needs <code>image-build</code>&rsquo;s image; <code>typecheck</code> and <code>unit-tests</code> need <code>deps</code>. Blocking failures do not abort the rest.</p>
+
+  <h2>Artefact &amp; publication</h2>
+
+  <p>The release job writes the <code>repo@sha256</code> reference into <a href="delivery.html">tarmac&rsquo;s own manifests under <code>gitops/</code></a>.</p>
+
+  <h2>Credentials &amp; trust</h2>
+
+  <p>The release token is valid for one hour and one repository. On a push the gates job also holds a registry credential while the app&rsquo;s tests run.</p>
+
+  <h2>Reporting &amp; reproducibility</h2>
+
+  <p>Findings land in the job summary, never on the pull request. <code>make ci</code> runs the same entrypoint without the publish gate.</p>
+
+  <div class="paths">
+    <span class="paths__label">Where to look</span>
+    <ul>
+      <li><code>tarmac/.github/workflows/ci.yml</code> &mdash; the shared pipeline: gates on every event, release only on the default branch</li>
+      <li><code>tarmac/gates/src/registry.ts</code> &mdash; the nine gates in run order, and the three things an app must provide</li>
+      <li><code>tarmac/gates/src/verdict.ts</code> &mdash; what makes a run fail, kept pure so it is testable</li>
+      <li><code>tarmac/promote/src/</code> &mdash; writes the image reference into tarmac&rsquo;s own <code>gitops/</code> tree; there is no separate deployment repository</li>
+      <li><code>tarmac/.github/workflows/self.yml</code> &mdash; the platform&rsquo;s own pipeline, where the gate-matrix drift check runs</li>
+    </ul>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--prev" href="app.html"><span>Previous</span><strong>1 &middot; The app</strong></a>
+    <a class="pager--next" href="policy.html"><span>Next</span><strong>3 &middot; Policy</strong></a>
+  </nav>
+</main>
+
+</div>
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

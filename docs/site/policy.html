@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Policy &mdash; Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="rail">
+  <a class="rail__brand" href="index.html">
+    <strong>Field Guide</strong>
+    <span>tarmac &amp; greeter</span>
+  </a>
+  <div class="toc">
+    <div class="toc__part">
+      <a href="app.html">1 &nbsp;The app</a>
+      <a href="ci.html">2 &nbsp;CI</a>
+      <a href="policy.html" aria-current="page">3 &nbsp;Policy</a>
+      <a href="delivery.html">4 &nbsp;Delivery</a>
+      <a href="infrastructure.html">5 &nbsp;Infrastructure</a>
+      <a href="local.html">6 &nbsp;Local</a>
+      <a href="docs.html">7 &nbsp;Docs and omissions</a>
+    </div>
+  </div>
+  <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+</nav>
+
+<main class="page">
+  <p class="eyebrow">Chapter 3</p>
+  <h1>Policy</h1>
+
+  <p class="standfirst">Rules over three kinds of source, enforced in two places and proven two ways &mdash; unit tests on one side, a live refusal on the other.</p>
+
+  <div class="note note--plain">
+    <span class="note__label">Moving parts</span>
+    <p>conftest evaluates Rego over files before a merge. In the cluster it is Kubernetes&rsquo; own <code>ValidatingAdmissionPolicy</code>, written in CEL &mdash; no Gatekeeper, no Kyverno.</p>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["Pull request"] --> B["Policy gate"]
+  B --> C["API server"]
+  D["Direct kubectl apply"] --> C
+  C --> E["Cluster"]
+</pre>
+    <figcaption>A direct apply meets only the second check, which is why two of the rules are worth stating twice.</figcaption>
+  </figure>
+
+  <h2>Subject</h2>
+
+  <p>Source, not results: Terraform, the <a href="delivery.html">Kubernetes manifests that declare what runs</a>, and the Dockerfile. No plan is parsed &mdash; a later gate checks what the provider accepts.</p>
+
+  <h2>Enforcement point</h2>
+
+  <p>Both. conftest runs rules written in Rego, a policy language, over files <a href="ci.html">before a merge</a>; the API server checks objects at admission, before accepting them.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Rule family</th><th>Where it runs</th><th>Verdict</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Images from one registry, pinned to exact content; resource limits</td><td>before merge, then at admission</td><td><span class="pill pill--blocking">blocking</span></td></tr>
+        <tr><td>Namespace Pod Security label</td><td>before merge, then in the cluster</td><td><span class="pill pill--blocking">blocking</span></td></tr>
+        <tr><td>Bucket naming both sides, S3 settings, provider pinning</td><td>before merge</td><td><span class="pill pill--blocking">blocking</span></td></tr>
+        <tr><td>Dockerfile base images</td><td>before merge</td><td><span class="pill pill--blocking">blocking</span></td></tr>
+        <tr><td>Module pinning, literal Secret data</td><td>before merge</td><td><span class="pill pill--reporting">reporting</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Authority</h2>
+
+  <p>Anyone who merges without CI bypasses the first check. The second cannot be, and it follows <code>kubectl debug</code> onto the ephemeral-container endpoint rather than stopping at the Pod.</p>
+
+  <h2>Rule tests</h2>
+
+  <p>115 tests run the Rego against sample inputs; 35 more evaluate the admission CEL with no cluster running. Installation still waits for a real refusal per policy, so a dead rule cannot hide behind a live one.</p>
+
+  <h2>Scope &amp; exemptions</h2>
+
+  <p>Scope is an exclusion list, not opt-in: the admission bindings skip six named namespaces &mdash; cluster partitions &mdash; only two of them the platform&rsquo;s own.</p>
+
+  <div class="note">
+    <span class="note__label">Known gap</span>
+    <p>Only one of the two policies can follow. Kubernetes refuses any request that sets <code>resources</code> on an ephemeral container, so a rule demanding limits there would ban debugging rather than police it &mdash; and debug containers go on consuming capacity that nothing accounts for.</p>
+  </div>
+
+  <div class="paths">
+    <span class="paths__label">Where to look</span>
+    <ul>
+      <li><code>tarmac/policy/kubernetes/</code> &mdash; the manifest rules, each with its own test file</li>
+      <li><code>tarmac/policy/terraform/</code> &mdash; five more, read straight off the HCL</li>
+      <li><code>tarmac/policy/dockerfile/</code> &mdash; the only rules that read a Dockerfile, and the one image no manifest rule can see</li>
+      <li><code>tarmac/policy/admission/</code> &mdash; the two the API server enforces, and the namespaces it skips</li>
+      <li><code>tarmac/scripts/admission-up.sh</code> &mdash; installs, then waits to watch both refusals</li>
+    </ul>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--prev" href="ci.html"><span>Previous</span><strong>2 &middot; CI</strong></a>
+    <a class="pager--next" href="delivery.html"><span>Next</span><strong>4 &middot; Delivery</strong></a>
+  </nav>
+</main>
+
+</div>
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

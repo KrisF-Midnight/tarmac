@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Infrastructure &mdash; Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="rail">
+  <a class="rail__brand" href="index.html">
+    <strong>Field Guide</strong>
+    <span>tarmac &amp; greeter</span>
+  </a>
+  <div class="toc">
+    <div class="toc__part">
+      <a href="app.html">1 &nbsp;The app</a>
+      <a href="ci.html">2 &nbsp;CI</a>
+      <a href="policy.html">3 &nbsp;Policy</a>
+      <a href="delivery.html">4 &nbsp;Delivery</a>
+      <a href="infrastructure.html" aria-current="page">5 &nbsp;Infrastructure</a>
+      <a href="local.html">6 &nbsp;Local</a>
+      <a href="docs.html">7 &nbsp;Docs and omissions</a>
+    </div>
+  </div>
+  <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+</nav>
+
+<main class="page">
+  <p class="eyebrow">Chapter 5</p>
+  <h1>Infrastructure</h1>
+
+  <p class="standfirst">Everything Terraform creates for the application is one S3 bucket and one object &mdash; and the application repository declares neither of them.</p>
+
+  <div class="note note--plain">
+    <span class="note__label">Moving parts</span>
+    <p>Terraform 1.15.9 pinned in CI, AWS provider 6.x, an S3 backend locking with a lockfile rather than DynamoDB, and LocalStack pinned by digest standing in for AWS.</p>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["greeter infra root"] --> B["app-dependencies module"]
+  B --> C["Config bucket and object"]
+  A --> D["State in tarmac-tfstate"]
+  E["Pod"] --> C
+</pre>
+    <figcaption>Terraform derives the bucket name and the deployment manifest retypes it &mdash; two files, one convention, joined only by a policy rule that checks they still agree.</figcaption>
+  </figure>
+
+  <h2>Resources</h2>
+
+  <p>One bucket per application and environment, one object per config entry. Versioning, encryption and a public access block are constants, not variables. No IAM, no database, no queue.</p>
+
+  <h2>Contract</h2>
+
+  <p><code>app_name</code> is <a href="policy.html">validated at plan time</a> because a bucket name is global and immutable; caller tags merge under the platform&rsquo;s.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>What it carries</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>app_name</code></td><td>Names and tags every resource. Three to 28 characters of lowercase letters, digits and hyphens, checked by a variable validation rather than by the API at apply</td></tr>
+        <tr><td><code>environment</code></td><td>One of <code>local</code>, <code>staging</code>, <code>production</code></td></tr>
+        <tr><td><code>config</code></td><td>Object key to contents. Values reach plan output and state, so nothing secret belongs here</td></tr>
+        <tr><td><code>tags</code></td><td>Merged under the platform&rsquo;s own, which win</td></tr>
+        <tr><td>Outputs</td><td><code>config_bucket</code>, <code>config_bucket_arn</code>, <code>config_keys</code> &mdash; only the first has a caller</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Ownership</h2>
+
+  <p>Every resource block lives in tarmac; the app repository holds a greeting and one module call. The source is a relative path into a sibling checkout, where a version constraint belongs.</p>
+
+  <h2>State</h2>
+
+  <p>S3, with the lock beside the state file rather than a DynamoDB table. Bucket, key and region arrive at <code>init</code> from a per-environment file, so a new environment adds files rather than Terraform.</p>
+
+  <h2>Access grant</h2>
+
+  <p><a href="local.html">No IAM.</a> The pod gets a static key pair from a Secret in git. The app&rsquo;s S3 client cannot assume a role, so a real account changes how it authenticates, not only where the Secret comes from.</p>
+
+  <div class="paths">
+    <span class="paths__label">Where to look</span>
+    <ul>
+      <li><code>tarmac/infra/modules/app-dependencies/</code> &mdash; the bucket, its three non-negotiable settings, and the four inputs</li>
+      <li><code>greeter/infra/main.tf</code> &mdash; what the application decides for itself: a greeting, and one module call to get somewhere to keep it</li>
+      <li><code>greeter/infra/env/</code> &mdash; backend config and variables per environment; adding one adds files here, not Terraform</li>
+      <li><code>tarmac/localstack/</code> &mdash; the emulator, and the init hook that creates the state bucket a backend cannot create for itself</li>
+      <li><code>tarmac/gitops/local-aws/credentials.yaml</code> &mdash; the key pair the pod is handed, and why it sits in git</li>
+    </ul>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--prev" href="delivery.html"><span>Previous</span><strong>4 &middot; Delivery</strong></a>
+    <a class="pager--next" href="local.html"><span>Next</span><strong>6 &middot; Local</strong></a>
+  </nav>
+</main>
+
+</div>
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

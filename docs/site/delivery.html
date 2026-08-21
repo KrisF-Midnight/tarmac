@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delivery &mdash; Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="rail">
+  <a class="rail__brand" href="index.html">
+    <strong>Field Guide</strong>
+    <span>tarmac &amp; greeter</span>
+  </a>
+  <div class="toc">
+    <div class="toc__part">
+      <a href="app.html">1 &nbsp;The app</a>
+      <a href="ci.html">2 &nbsp;CI</a>
+      <a href="policy.html">3 &nbsp;Policy</a>
+      <a href="delivery.html" aria-current="page">4 &nbsp;Delivery</a>
+      <a href="infrastructure.html">5 &nbsp;Infrastructure</a>
+      <a href="local.html">6 &nbsp;Local</a>
+      <a href="docs.html">7 &nbsp;Docs and omissions</a>
+    </div>
+  </div>
+  <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+</nav>
+
+<main class="page">
+  <p class="eyebrow">Chapter 4</p>
+  <h1>Delivery</h1>
+
+  <p class="standfirst">CI never touches the cluster &mdash; it edits one line of YAML and pushes, and a reconciler inside the cluster pulls that commit and makes it true.</p>
+
+  <div class="note note--plain">
+    <span class="note__label">Moving parts</span>
+    <p>Argo CD reconciles, app-of-apps. Plain Kubernetes YAML &mdash; no Helm, no Kustomize, no overlays. The promoter is a Bun program in tarmac; Flux and Argo CD Image Updater were rejected.</p>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["Gate facts"] --> B["Promoter"]
+  B --> C["Commit on main"]
+  C --> D["Argo CD"]
+  D --> E["Cluster"]
+</pre>
+    <figcaption>Argo CD reads the pushed branch rather than a working tree, so nothing upstream of the cluster ever holds a credential for it.</figcaption>
+  </figure>
+
+  <h2>Desired state</h2>
+
+  <p>Desired state is what the cluster should run, held in git. Here that is <a href="ci.html"><code>gitops/</code> inside tarmac</a>, not a separate deployment repository, and a reviewer owns every line but the image.</p>
+
+  <h2>Sync &amp; reconciliation</h2>
+
+  <p>Reconciliation is a pull, not a push: Argo CD polls <code>main</code> every three minutes, so nothing outside needs a way in. <a href="local.html"><code>make suspend</code></a> stops it so hand edits stick.</p>
+
+  <div class="note">
+    <span class="note__label">Known gap</span>
+    <p><code>selfHeal</code> reverts edits to resources Argo tracks, not one it never knew about: a hand-applied pod ran eight minutes with every Application reporting Synced.</p>
+  </div>
+
+  <h2>Promotion</h2>
+
+  <p>Promotion turns a published artefact into desired state. The promoter writes the digest into <code>gitops/&lt;app&gt;/deployment.yaml</code> and pushes, refuses anything not digest-pinned, and never writes from a laptop.</p>
+
+  <h2>Blast radius</h2>
+
+  <p>CI holds no cluster credential. What a merge may do is bounded by the <code>tarmac</code> AppProject, and Argo CD refuses any resource it does not list.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Bound</th><th>What it allows</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Repository</td><td>One. An Application cannot point at git nobody reviewed here</td></tr>
+        <tr><td>Destinations</td><td>Namespaces <code>greeter</code> and <code>argocd</code>, on the local cluster</td></tr>
+        <tr><td>Cluster-scoped</td><td><code>Namespace</code> only &mdash; so a merge cannot grant itself a ClusterRoleBinding</td></tr>
+        <tr><td>Namespaced</td><td>Five kinds by name. <code>EndpointSlice</code> is absent on purpose, so a machine-specific address cannot be committed</td></tr>
+        <tr><td>CI&rsquo;s token</td><td>A GitHub App installation token, one repository, one hour. Nothing cluster-facing</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Rollback</h2>
+
+  <p>Rolling back is <code>git revert</code> down the path a promotion already takes; there is no second mechanism to keep working. Argo CD&rsquo;s one-click rollback is refused while automated sync is on.</p>
+
+  <div class="paths">
+    <span class="paths__label">Where to look</span>
+    <ul>
+      <li><code>tarmac/gitops/argocd/bootstrap/root.yaml</code> &mdash; the only Application applied by hand; everything else is a file it discovers</li>
+      <li><code>tarmac/gitops/argocd/bootstrap/project.yaml</code> &mdash; the allowlist every synced resource is validated against</li>
+      <li><code>tarmac/gitops/greeter/deployment.yaml</code> &mdash; the deployed manifest, and the one line CI owns</li>
+      <li><code>tarmac/promote/src/manifest.ts</code> &mdash; locate the container structurally, edit the line textually, re-parse to check it landed</li>
+      <li><code>tarmac/scripts/reconcile.sh</code> &mdash; break glass, and why it stops the controller rather than one Application</li>
+    </ul>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--prev" href="policy.html"><span>Previous</span><strong>3 &middot; Policy</strong></a>
+    <a class="pager--next" href="infrastructure.html"><span>Next</span><strong>5 &middot; Infrastructure</strong></a>
+  </nav>
+</main>
+
+</div>
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

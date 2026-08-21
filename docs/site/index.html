@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+
+<main class="page cover">
+
+  <div class="cover__top">
+    <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+  </div>
+
+  <p class="eyebrow">Contents</p>
+  <h1>Field Guide</h1>
+  <p class="cover__sub">tarmac &amp; greeter</p>
+
+  <p class="standfirst">Seven chapters on one paved road &mdash; how a commit in an application repository becomes a running workload, and where the platform deliberately declines to hold a credential.</p>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["Application repo"] --> B["Platform gates"]
+  B --> C["Published image"]
+  C --> D["Manifest in git"]
+  D --> E["Cluster"]
+</pre>
+    <figcaption>Each chapter takes one hop of this. Nothing to the left of the cluster holds a credential for it &mdash; the last arrow is pulled, not pushed.</figcaption>
+  </figure>
+
+  <div class="card-grid">
+    <a class="card" href="app.html">
+      <span class="card__n">1</span>
+      <span class="card__t">The app</span>
+      <span class="card__d">Dull on purpose. Its only job is to prove the road works, and to fail visibly when something behind it is broken.</span>
+    </a>
+    <a class="card" href="ci.html">
+      <span class="card__n">2</span>
+      <span class="card__t">CI</span>
+      <span class="card__d">Nine checks over one commit, in a fixed order, run by a program rather than a YAML script.</span>
+    </a>
+    <a class="card" href="policy.html">
+      <span class="card__n">3</span>
+      <span class="card__t">Policy</span>
+      <span class="card__d">The same rules twice &mdash; once before the merge, where a violation is a review comment, and again at admission.</span>
+    </a>
+    <a class="card" href="delivery.html">
+      <span class="card__n">4</span>
+      <span class="card__t">Delivery</span>
+      <span class="card__d">One line of YAML, edited and pushed. A reconciler inside the cluster does everything after that.</span>
+    </a>
+    <a class="card" href="infrastructure.html">
+      <span class="card__n">5</span>
+      <span class="card__t">Infrastructure</span>
+      <span class="card__d">One bucket and one object, declared by the platform rather than by the application that depends on them.</span>
+    </a>
+    <a class="card" href="local.html">
+      <span class="card__n">6</span>
+      <span class="card__t">Local</span>
+      <span class="card__d">The whole road on a laptop with no cloud account &mdash; which buys reproducibility and costs you IAM.</span>
+    </a>
+    <a class="card" href="docs.html">
+      <span class="card__n">7</span>
+      <span class="card__t">Docs and omissions</span>
+      <span class="card__d">The reasoning, the absences, and the tables that are not allowed to go stale.</span>
+    </a>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--next" href="app.html"><span>Start reading</span><strong>1 &middot; The app</strong></a>
+  </nav>
+
+</main>
+
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

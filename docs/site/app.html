@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The app &mdash; Field Guide</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="rail">
+  <a class="rail__brand" href="index.html">
+    <strong>Field Guide</strong>
+    <span>tarmac &amp; greeter</span>
+  </a>
+  <div class="toc">
+    <div class="toc__part">
+      <a href="app.html" aria-current="page">1 &nbsp;The app</a>
+      <a href="ci.html">2 &nbsp;CI</a>
+      <a href="policy.html">3 &nbsp;Policy</a>
+      <a href="delivery.html">4 &nbsp;Delivery</a>
+      <a href="infrastructure.html">5 &nbsp;Infrastructure</a>
+      <a href="local.html">6 &nbsp;Local</a>
+      <a href="docs.html">7 &nbsp;Docs and omissions</a>
+    </div>
+  </div>
+  <button class="theme-toggle" type="button" data-theme-toggle>Theme</button>
+</nav>
+
+<main class="page">
+  <p class="eyebrow">Chapter 1</p>
+  <h1>The app</h1>
+
+  <p class="standfirst">A deliberately dull service whose only job is to prove the road works &mdash; and to fail visibly when something behind it is broken.</p>
+
+  <div class="note note--plain">
+    <span class="note__label">Moving parts</span>
+    <p>Bun is the runtime, the HTTP server and the S3 client in one &mdash; no framework, no AWS SDK. React renders the page, TypeScript throughout, <code>bun test</code> for the suite.</p>
+  </div>
+
+  <figure class="diagram">
+<pre class="mermaid">
+flowchart LR
+  A["Browser"] --> B["Bun process"]
+  B --> C["greeting source"]
+  C --> D["S3 object"]
+  E["readyz probe"] --> B
+</pre>
+    <figcaption>The probe and the API resolve through the same source, so readiness cannot claim health the API does not have.</figcaption>
+  </figure>
+
+  <h2>Interface &amp; runtime</h2>
+
+  <p>Bun serves the JSON API and the React page from one process &mdash; no proxy, no second container. Unmatched paths return the page too.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Route</th><th>What it answers</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>/*</code></td><td>The React page, which fetches the greeting rather than hardcoding it</td></tr>
+        <tr><td><code>/api/greeting</code></td><td>The greeting as JSON, or 503 when the source is unreachable</td></tr>
+        <tr><td><code>/healthz</code></td><td>Liveness. 200 always, touching nothing external</td></tr>
+        <tr><td><code>/readyz</code></td><td>Readiness. Reads the greeting, 503 when it cannot</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Build</h2>
+
+  <p>There is no build step: the image ships source, and Bun bundles the HTML entrypoint at startup. The base image is <a href="policy.html">pinned by digest</a>, the hash of the exact bytes.</p>
+
+  <h2>Config &amp; dependencies</h2>
+
+  <p>A bucket name in the environment switches the greeting from a built-in string to <a href="infrastructure.html">an object in S3</a>. It is read per request, so editing it needs no redeploy.</p>
+
+  <h2>Health &amp; failure</h2>
+
+  <p>Failing liveness restarts the container, and a restart cannot fix someone else&rsquo;s bucket. <code>/healthz</code> therefore touches nothing external, pinned at 200 by a test while the source is broken. Readiness reads the object; a pod that cannot leaves the load balancer.</p>
+
+  <h2>Identity</h2>
+
+  <p>At runtime it holds one S3 key pair, handed to it by the environment. It carries no cluster credential, and nothing in the repo names Kubernetes.</p>
+
+  <div class="paths">
+    <span class="paths__label">Where to look</span>
+    <ul>
+      <li><code>greeter/src/server.ts</code> &mdash; the routes, and the probe split</li>
+      <li><code>greeter/src/greeting.ts</code> &mdash; S3 or environment, chosen at startup</li>
+      <li><code>greeter/test/server.test.ts</code> &mdash; the broken-source cases</li>
+      <li><code>greeter/Dockerfile</code> &mdash; the digest pin, and why no bundle is built</li>
+      <li><code>greeter/infra/</code> &mdash; one call into the platform module, and the greeting string itself</li>
+    </ul>
+  </div>
+
+  <nav class="pager">
+    <a class="pager--prev" href="index.html"><span>Previous</span><strong>Contents</strong></a>
+    <a class="pager--next" href="ci.html"><span>Next</span><strong>2 &middot; CI</strong></a>
+  </nav>
+</main>
+
+</div>
+<script src="assets/mermaid.min.js"></script>
+<script src="assets/book.js"></script>
+</body>
+</html>

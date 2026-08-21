@@ -10,6 +10,10 @@ workflow, not by copying YAML.
 A local environment stands in for the cloud, so the whole road can be run end to end on a
 laptop with no cloud account.
 
+The same ground is covered as an illustrated guide in [`docs/site/`](docs/site/index.html) —
+eight short chapters, one diagram each. Open `docs/site/index.html` in a browser; it renders
+from disk, with no build step and nothing fetched over the network.
+
 ## Prerequisites
 
 | Tool | Purpose | Install |
@@ -296,7 +300,8 @@ rejected.
 | `kind/` | cluster definition, node image pinned by digest |
 | `localstack/` | the local AWS stand-in: compose file, environment, state-bucket bootstrap |
 | `scripts/` | the steps behind the Makefile targets |
-| `docs/` | onboarding, the gate matrix and the decision record |
+| `docs/` | onboarding, the gate matrix, the decision record and the illustrated guide |
+| `docs/site/` | that guide: eight self-contained HTML chapters, opened straight from disk |
 
 ## Infrastructure
 
