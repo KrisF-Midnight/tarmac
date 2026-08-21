@@ -1,6 +1,6 @@
 # Design Decisions
 
-Fifty-nine decisions, why each was made, what was rejected, and what it costs.
+Sixty decisions, why each was made, what was rejected, and what it costs.
 
 A decision that stops being true gets a new entry marking the old one superseded — the wrong turn
 stays in the record.
@@ -66,6 +66,7 @@ stays in the record.
 | [57](#57--the-admission-policies-are-tested-by-evaluating-their-cel-without-a-cluster) | The admission policies are tested by evaluating their CEL, without a cluster |
 | [58](#58--the-promoters-write-guard-names-the-event-not-just-the-runner) | The promoter's write guard names the event, not just the runner |
 | [59](#59--the-illustrated-guide-ships-inside-the-repo-not-on-a-pages-branch) | The illustrated guide ships inside the repo, not on a Pages branch |
+| [60](#60--a-new-platform-version-is-a-new-tag-consumers-are-never-moved-under) | A new platform version is a new tag; consumers are never moved under |
 
 ---
 
@@ -1741,6 +1742,36 @@ holds to its source, nothing compares the two.
 
 ---
 
+### 60 — A new platform version is a new tag; consumers are never moved under
+
+**Why.** Ten commits landed on `main` — a new blocking gate, three policy rules, a tightened write
+guard — while `greeter` was pinned at `v1`, which pointed at the commit before all of them. The
+whole point of `uses: …/ci.yml@v1` is that an application is checked against a version somebody
+released, not against whatever the platform team pushed this afternoon. Retagging `v1` onto the new
+commit would have been one command and no change to `greeter` at all, and it would have quietly
+made that sentence false: the same ref, the same pipeline definition on paper, different rules in
+practice, with nothing in the consumer's history recording that anything moved. So `v2` is a new
+tag, and `greeter` moves onto it in its own commit, reviewable in its own repository. The gates
+were run against `greeter` before the move rather than after, so the version bump was known to be
+safe at the moment it was made rather than discovered on a runner.
+
+**Rejected.** *Force-move `v1`* — no consumer change, fastest green run, and it rewrites what a
+released version means underneath the only thing consuming it; a platform that does this once has
+no versioned contract, only a branch with a nicer name. *Point `greeter` at `main`* — always
+current, and it deletes the boundary decision 5's repo split exists to demonstrate: the
+application would then track the platform's unreleased tip, so a half-finished platform commit
+becomes an application's CI failure. *Leave `greeter` on `v1`* — honest, but then none of the new
+gate logic ever runs against a real application, which is the only way to find out whether it
+works.
+
+**Cost.** Two tags to keep alive and a manual bump per consumer, with nothing telling a consumer
+that a newer version exists — no Dependabot ecosystem covers a reusable-workflow ref pinned to a
+tag. With one application the bump is a two-line edit; with thirty it is thirty pull requests
+nobody is scheduled to open, and the honest answer at that point is an automated bump this platform
+does not have.
+
+---
+
 ## Accepted costs, collected
 
 Every cost accepted above, in one place.
@@ -1822,6 +1853,7 @@ Every cost accepted above, in one place.
 | 57 | The CEL interpreter is a second implementation of somebody else's semantics — no type checking, no namespace selector, and it will drift |
 | 58 | The write guard is a pair split across two files, only one half of it tested, and a push to a side branch still satisfies the tested half |
 | 59 | 3.4 MB of unverified vendored JavaScript in a tree that pins everything else, and a second place for every fact to go stale with nothing comparing the two |
+| 60 | A manual version bump per consumer, with nothing announcing that a newer platform version exists — fine at one application, thirty unopened pull requests at thirty |
 
 ## Rejected tools, collected
 
