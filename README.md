@@ -40,6 +40,16 @@ account that charges money.
 
 ## Getting started
 
+Clone the platform and the application side by side. The platform provisions the
+application's dependencies and gates its code, so it needs the application on disk; it
+looks for it at `../greeter`, which `APP_DIR` overrides.
+
+```
+git clone https://github.com/KrisF-Midnight/tarmac.git
+git clone https://github.com/KrisF-Midnight/greeter.git
+cd tarmac
+```
+
 ```
 make up         # bring the platform up and provision ../greeter's dependencies
 make status     # what is running
