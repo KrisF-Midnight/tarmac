@@ -8,7 +8,13 @@
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-require_cmd kind "brew install kind"
+# `require_cmd docker` rather than the `require_docker` its siblings use. Both
+# check the binary; only the latter also insists the daemon is up, and a stopped
+# daemon is a state this script reports rather than refuses. A missing binary is
+# a different thing — nothing below can answer anything — so it still dies.
+require_cmd docker  "Install Docker Desktop."
+require_cmd kind    "brew install kind"
+require_cmd kubectl "brew install kubectl"
 
 indent() { sed 's/^/          /'; }
 

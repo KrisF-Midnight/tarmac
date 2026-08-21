@@ -39,7 +39,7 @@ ARGOCD_MANIFEST_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD
 # shellcheck disable=SC2034
 ARGOCD_MANIFEST_SHA256="795a3a972224da6a7f9d32c3e946445f062b60fb46028476715affeb688236e3"
 
-# conftest, which runs the Rego in policy/ as the pipeline's first gate. Pinned
+# conftest, which runs the Rego in policy/ as the pipeline's first two gates. Pinned
 # here rather than installed by a marketplace action: this is the tool that
 # decides whether a change is allowed to merge, so its provenance deserves the
 # same checksum every other fetched artefact in this file gets.

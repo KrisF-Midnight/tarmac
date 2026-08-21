@@ -64,8 +64,14 @@ jobs:
       # validated by the same gate the applications get rather than by a step
       # written specially for it. Note that it validates as a child module: no
       # backend, no provider block, nothing to configure.
+      #
+      # `base-image` is listed even though this repository ships no Dockerfile
+      # and the gate therefore skips. Listing it is what makes that a fact this
+      # run reports rather than an assumption: the day the platform grows a
+      # Dockerfile, it is already held to the rule it imposes on everyone else,
+      # instead of being exempt until somebody notices.
       - name: Gate the platform with its own policies
-        run: bun gates/src/cli.ts --app-dir . --only policy,infra
+        run: bun gates/src/cli.ts --app-dir . --only base-image,policy,infra
 
       # The shell that survives is the shell nobody has read since it was
       # written, so it gets a linter rather than trust.

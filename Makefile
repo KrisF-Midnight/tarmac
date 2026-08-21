@@ -22,7 +22,7 @@ APP ?= $(notdir $(patsubst %/,%,$(APP_DIR)))
 # repository has an opinion about.
 FACTS ?= /tmp/tarmac-facts.json
 
-.PHONY: help up down status ci test typecheck gate-matrix check-gate-matrix \
+.PHONY: help up down down-purge status ci test typecheck gate-matrix check-gate-matrix \
         infra infra-plan infra-fmt ingress argocd aws-endpoint suspend resume promote \
         admission policy policy-test security
 
@@ -55,6 +55,14 @@ down: ## Tear the local platform down
 	@./scripts/localstack-down.sh
 	@./scripts/cluster-down.sh
 
+# The same teardown, plus the stand-in's data volume — which is where Terraform
+# state lives. Separate from `down` on purpose: `down` is the one people type out
+# of habit, and it must never be the one that loses state. After this, the next
+# `make up` genuinely starts from nothing.
+down-purge: ## Tear the local platform down and discard the stand-in's data
+	@./scripts/localstack-down.sh --purge
+	@./scripts/cluster-down.sh
+
 ingress: ## Install or re-apply the ingress controller
 	@./scripts/ingress-up.sh
 
@@ -67,8 +75,10 @@ argocd: ## Install Argo CD and point it at gitops/
 aws-endpoint: ## Regenerate the emulator's EndpointSlice from its current address
 	@./scripts/aws-endpoint-up.sh
 
-# The only way to change the cluster without a commit, and it does not deploy
-# anything — it stops Argo CD reverting what you do by hand, then puts it back.
+# The sanctioned way to change the cluster without a commit, and it does not
+# deploy anything — it stops Argo CD reverting what you do by hand, then puts it
+# back. Sanctioned, not sole: decision 45 covers why selfHeal alone does not make
+# the cluster edit-proof, and which RBAC rule would.
 # Deliberately a pair: an off switch with no on switch beside it is how a cluster
 # ends up drifting for a week because somebody fixed an incident and went home.
 suspend: ## Break glass: stop Argo CD reconciling, so kubectl edits stick
@@ -80,18 +90,27 @@ resume: ## Hand the cluster back to git, reverting anything edited by hand
 admission: ## Install or re-apply the cluster's admission policies
 	@./scripts/admission-up.sh
 
-# The pre-merge half of the same rules, run on its own. `make ci` runs it too,
-# as the first gate — this is the shortcut for when policy is the thing being
-# worked on and the rest of the pipeline is noise.
-policy: ## Run the policy gate against APP_DIR
-	@bun gates/src/cli.ts --app-dir $(APP_DIR) --only policy
+# The pre-merge half of the same rules, run on their own. `make ci` runs both
+# too, as its first two gates — this is the shortcut for when policy is the
+# thing being worked on and the rest of the pipeline is noise.
+policy: ## Run the policy and base-image gates against APP_DIR
+	@bun gates/src/cli.ts --app-dir $(APP_DIR) --only base-image,policy
 
 # The policies' own tests. Rules that have never been shown to reject anything
 # are indistinguishable from rules that do not work, so these run in CI beside
 # the platform's TypeScript tests rather than as an optional extra.
+#
+# All four policy directories, not just the three conftest can read. The
+# admission policies are CEL in YAML, so their tests are bun rather than
+# conftest — but somebody typing `policy-test` is asking for the policy tests,
+# not for the subset that happens to share a runner. They also run under `make
+# test`, which runs the whole bun suite; the few milliseconds of overlap cost
+# less than a target that silently skips a quarter of what it claims to cover.
 policy-test: ## Run the policy unit tests
+	@conftest verify --policy policy/dockerfile
 	@conftest verify --policy policy/kubernetes
 	@conftest verify --policy policy/terraform
+	@bun test policy/admission
 
 # Needs an image to scan, so it is `make ci` minus everything except the build
 # — running `--only security` alone would scan whatever that tag pointed at last
@@ -134,6 +153,9 @@ gate-matrix: ## Regenerate docs/gate-matrix.md from the gate registry
 # The matrix is documentation that claims to describe the code. A stale one is
 # worse than none, so CI regenerates it and fails if the tree disagrees.
 check-gate-matrix: ## Fail if the committed gate matrix is out of date
-	@bun gates/src/matrix.ts /tmp/gate-matrix.md >/dev/null
-	@diff -u docs/gate-matrix.md /tmp/gate-matrix.md \
+	@set -euo pipefail; \
+	generated="$$(mktemp -t gate-matrix)"; \
+	trap 'rm -f "$$generated"' EXIT; \
+	bun gates/src/matrix.ts "$$generated" >/dev/null; \
+	diff -u docs/gate-matrix.md "$$generated" \
 		|| { echo "docs/gate-matrix.md is stale — run 'make gate-matrix'"; exit 1; }

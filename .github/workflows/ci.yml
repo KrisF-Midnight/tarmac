@@ -31,8 +31,9 @@ on:
     secrets:
       PLATFORM_APP_ID:
         description: >-
-          Identity of the GitHub App that commits to the deployment repository.
-          Optional, so an application can adopt the gates before it can deploy;
+          Identity of the GitHub App that commits the promoted digest into
+          tarmac's own `gitops/` directory. Optional, so an application can
+          adopt the gates before it can deploy;
           without it the release job fails rather than skipping, because a
           default-branch build that cannot deploy is a broken pipeline, not a
           quiet no-op.
@@ -195,10 +196,13 @@ jobs:
       contents: read
 
     steps:
-      # Scoped to one repository and expiring in an hour. The alternative, a
-      # personal access token, is a long-lived credential carrying every
-      # permission its owner has — see decision 32.
-      - name: Mint a token for the deployment repository
+      # Scoped to one repository — tarmac, the one this workflow lives in — and
+      # expiring in an hour. A reusable workflow runs in the caller's context,
+      # so its GITHUB_TOKEN cannot write here; that is the whole reason a token
+      # is minted at all. The alternative, a personal access
+      # token, is a long-lived credential carrying every permission its owner
+      # has — see decision 32.
+      - name: Mint a token that can write to tarmac
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -220,7 +224,12 @@ jobs:
           ref: ${{ inputs.platform-ref }}
           path: tarmac
 
-      - name: Check out the deployment repository
+      # The same repository a second time, at its default branch and with a
+      # token that can push. `gitops` is a working-directory name, not another
+      # repository: the promoter edits the `gitops/` tree inside this copy and
+      # commits it back. Renaming the path would break the promoter's argument
+      # below and the manifest paths it writes.
+      - name: Check out tarmac again, writable, for the gitops tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository_owner }}/tarmac
